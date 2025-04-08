@@ -29,7 +29,7 @@ def cekani_na_vstup():
     input("🕹️ Stiskni Enter pro zastavení pohybu...\n")
 
     print("🛑 Pohyb zastaven.")
-    rtde_c.triggerProtectiveStop()
+    rtde_c.stopJ()
 
     stop_event.set()  # vyšle signál druhému vláknu
 
@@ -40,8 +40,9 @@ def pohyb_kloubu():
 
     while not stop_event.is_set():
         # Zvýšíme úhel jednoho kloubu (např. kloub 0)
-        joint_angles[5] += 1.0
-        rtde_c.moveJ(joint_angles, speed=0.3, acceleration=0.5)
+        joint_angles[5] += math.pi
+        rtde_c.moveJ(joint_angles, speed=0.3,
+                     acceleration=0.5, asynchronous=True)
         time.sleep(0.1)
 
 
