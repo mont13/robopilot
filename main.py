@@ -32,19 +32,33 @@ def cekani_na_vstup():
     rtde_c.stopJ()
 
     stop_event.set()  # vyšle signál druhému vláknu
+    rtde_c.moveJ(HOME_POINT, speed=1)
 
 
 def pohyb_kloubu():
     print("▶️ Začínám pohyb kloubu...")
     joint_angles = rtde_r.getActualQ()
 
+    to_right = True
+
     while not stop_event.is_set():
-        # Zvýšíme úhel jednoho kloubu (např. kloub 0)
-        joint_angles[5] += math.pi
-        rtde_c.moveJ(joint_angles, speed=0.3,
-                     acceleration=0.5, asynchronous=True)
+        if to_right:
+            joint_angles[5] += math.pi
+            joint_angles[4] += math.pi
+            joint_angles[0] += math.pi
+            to_right = False
+        else:
+            joint_angles[5] -= math.pi
+            joint_angles[4] -= math.pi
+            joint_angles[0] -= math.pi
+            to_right = True
+
+        rtde_c.moveJ(joint_angles, speed=0.8)
         time.sleep(0.1)
 
+
+# Init robot to home position
+rtde_c.moveJ(HOME_POINT, speed=1)
 
 vlákno_pohyb = threading.Thread(target=pohyb_kloubu)
 vlákno_vstup = threading.Thread(target=cekani_na_vstup)
