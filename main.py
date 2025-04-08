@@ -4,6 +4,7 @@ import rtde_io
 import time
 import math
 import threading
+import speech_recognition as sr
 
 # INIT
 
@@ -24,27 +25,47 @@ print("Current TCP pose [x,y,z,rx,ry,rz]:", [round(p, 4) for p in current_tcp])
 
 stop_event = threading.Event()
 
+# Voice Recognition Function
+def voice_input():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("🎤 Say 'start' to begin robot movement or 'stop' to end:")
+        audio = recognizer.listen(source)
 
+    try:
+        command = recognizer.recognize_google(audio).lower()
+        print(f"🗣️ You said: '{command}'")
+        return command
+    except sr.UnknownValueError:
+        print("⚠️ Could not understand audio")
+    except sr.RequestError as e:
+        print(f"⚠️ Could not request results from service; {e}")
+
+    return ""
+
+# Wait for "stop" voice command
 def cekani_na_vstup():
-    input("🕹️ Stiskni Enter pro zastavení pohybu...\n")
-
-    print("🛑 Pohyb zastaven.")
-    rtde_c.stopJ()
-
-    stop_event.set()  # vyšle signál druhému vláknu
-
-
-def pohyb_kloubu():
-    print("▶️ Začínám pohyb kloubu...")
-    joint_angles = rtde_r.getActualQ()
-
     while not stop_event.is_set():
-        # Zvýšíme úhel jednoho kloubu (např. kloub 0)
-        joint_angles[5] += math.pi
-        rtde_c.moveJ(joint_angles, speed=0.3,
-                     acceleration=0.5, asynchronous=True)
-        time.sleep(0.1)
+        command = voice_input()
+        if "stop" in command:
+            print("🛑 Pohyb zastaven hlasovým příkazem.")
+            rtde_c.stopJ()
+            stop_event.set()
 
+# Robot joint movement function
+def pohyb_kloubu():
+    print("▶️ Čekám na hlasový příkaz 'start'...")
+    while not stop_event.is_set():
+        command = voice_input()
+        if "start" in command:
+            print("▶️ Začínám pohyb kloubu...")
+            joint_angles = rtde_r.getActualQ()
+
+            while not stop_event.is_set():
+                joint_angles[5] += math.pi
+                rtde_c.moveJ(joint_angles, speed=0.3,
+                             acceleration=0.5, asynchronous=True)
+                time.sleep(0.1)
 
 vlákno_pohyb = threading.Thread(target=pohyb_kloubu)
 vlákno_vstup = threading.Thread(target=cekani_na_vstup)
