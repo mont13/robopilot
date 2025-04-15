@@ -4,7 +4,6 @@ import rtde_io
 import time
 import math
 import threading
-import speech_recognition as sr
 
 # INIT
 
@@ -25,47 +24,41 @@ print("Current TCP pose [x,y,z,rx,ry,rz]:", [round(p, 4) for p in current_tcp])
 
 stop_event = threading.Event()
 
-# Voice Recognition Function
-def voice_input():
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        print("🎤 Say 'start' to begin robot movement or 'stop' to end:")
-        audio = recognizer.listen(source)
 
-    try:
-        command = recognizer.recognize_google(audio).lower()
-        print(f"🗣️ You said: '{command}'")
-        return command
-    except sr.UnknownValueError:
-        print("⚠️ Could not understand audio")
-    except sr.RequestError as e:
-        print(f"⚠️ Could not request results from service; {e}")
-
-    return ""
-
-# Wait for "stop" voice command
 def cekani_na_vstup():
-    while not stop_event.is_set():
-        command = voice_input()
-        if "stop" in command:
-            print("🛑 Pohyb zastaven hlasovým příkazem.")
-            rtde_c.stopJ()
-            stop_event.set()
+    input("🕹️ Stiskni Enter pro zastavení pohybu...\n")
 
-# Robot joint movement function
+    print("🛑 Pohyb zastaven.")
+    rtde_c.stopJ()
+
+    stop_event.set()  # vyšle signál druhému vláknu
+    rtde_c.moveJ(HOME_POINT, speed=1)
+
+
 def pohyb_kloubu():
-    print("▶️ Čekám na hlasový příkaz 'start'...")
-    while not stop_event.is_set():
-        command = voice_input()
-        if "start" in command:
-            print("▶️ Začínám pohyb kloubu...")
-            joint_angles = rtde_r.getActualQ()
+    print("▶️ Začínám pohyb kloubu...")
+    joint_angles = rtde_r.getActualQ()
 
-            while not stop_event.is_set():
-                joint_angles[5] += math.pi
-                rtde_c.moveJ(joint_angles, speed=0.3,
-                             acceleration=0.5, asynchronous=True)
-                time.sleep(0.1)
+    to_right = True
+
+    while not stop_event.is_set():
+        if to_right:
+            joint_angles[5] += math.pi
+            joint_angles[4] += math.pi
+            joint_angles[0] += math.pi
+            to_right = False
+        else:
+            joint_angles[5] -= math.pi
+            joint_angles[4] -= math.pi
+            joint_angles[0] -= math.pi
+            to_right = True
+
+        rtde_c.moveJ(joint_angles, speed=0.8)
+        time.sleep(0.1)
+
+
+# Init robot to home position
+rtde_c.moveJ(HOME_POINT, speed=1)
 
 vlákno_pohyb = threading.Thread(target=pohyb_kloubu)
 vlákno_vstup = threading.Thread(target=cekani_na_vstup)
