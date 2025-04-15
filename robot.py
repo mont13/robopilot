@@ -314,7 +314,7 @@ if __name__ == "__main__":
         print(f"\nCurrent Offset: {my_robot.offset}")
 
         # Set an offset (e.g., TCP)
-        tcp_offset = [0, 0, 0.15, 0, 0, math.pi/2] # 15cm Z offset, 90 deg Z rotation
+        tcp_offset = [0, 0, 0.15, 0, 0, 0] # 15cm Z offset, 90 deg Z rotation
         my_robot.offset = tcp_offset
         print(f"Get New Offset: {my_robot.offset}")
 
