@@ -292,7 +292,7 @@ class Robot:
 if __name__ == "__main__":
     try:
         # Create a robot instance
-        my_robot = Robot(ip="192.168.1.102")
+        my_robot = Robot(ip="192.168.0.96")
         print(my_robot)
 
         # Get current home point
@@ -336,6 +336,8 @@ if __name__ == "__main__":
             target_p = [0.4, -0.2, 0.3, math.pi, 0, 0] # Example pose
             my_robot.move_l(target_p, speed=0.2)
 
+            # Move home
+            my_robot.move_home(speed=1.0)
             # Disconnect
             my_robot.disconnect()
         else:
