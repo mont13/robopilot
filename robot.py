@@ -122,22 +122,22 @@ class Robot:
         """
         print(f"Simulating connection to robot at {self.ip}...")
         # Example with rtde_control (requires installation: pip install rtde_control)
-        # try:
-        #     import rtde_control
-        #     self._connection = rtde_control.RTDEControlInterface(self.ip)
-        #     print(f"Successfully connected to robot at {self.ip}.")
-        #     return True
-        # except ImportError:
-        #     print("Warning: 'rtde_control' library not found. Cannot connect.")
-        #     self._connection = None
-        #     return False
-        # except Exception as e:
-        #     print(f"Error connecting to robot at {self.ip}: {e}")
-        #     self._connection = None
-        #     return False
-        self._connection = "Simulated Connection" # Placeholder
-        print("Connection successful (simulated).")
-        return True
+        try:
+            import rtde_control
+            self._connection = rtde_control.RTDEControlInterface(self.ip)
+            print(f"Successfully connected to robot at {self.ip}.")
+            return True
+        except ImportError:
+            print("Warning: 'rtde_control' library not found. Cannot connect.")
+            self._connection = None
+            return False
+        except Exception as e:
+            print(f"Error connecting to robot at {self.ip}: {e}")
+            self._connection = None
+            return False
+        # self._connection = "Simulated Connection" # Placeholder
+        # print("Connection successful (simulated).")
+        # return True
 
     def disconnect(self):
         """
@@ -145,10 +145,10 @@ class Robot:
         """
         print(f"Simulating disconnection from robot at {self.ip}...")
         # Example with rtde_control
-        # if hasattr(self._connection, 'disconnect'): # Check if it's an rtde obj
-        #     self._connection.disconnect()
+        if hasattr(self._connection, 'disconnect'): # Check if it's an rtde obj
+            self._connection.disconnect()
         self._connection = None
-        print("Disconnected (simulated).")
+        # print("Disconnected (simulated).")
 
     def move_j(self, target_joints: list[float], speed: float = 0.5, acceleration: float = 1.0):
         """
@@ -167,15 +167,15 @@ class Robot:
              print("Error: target_joints must be a list of 6 numbers.")
              return
 
-        print(f"Simulating MOVEJ to: {target_joints}")
+        # print(f"Simulating MOVEJ to: {target_joints}")
         print(f"  Speed: {speed} rad/s, Acceleration: {acceleration} rad/s^2")
         # Real implementation example (rtde_control):
-        # if self._connection:
-        #     try:
-        #          self._connection.moveJ(target_joints, speed, acceleration)
-        #          print("move_j command sent successfully.")
-        #     except Exception as e:
-        #          print(f"Error during move_j: {e}")
+        if self._connection:
+            try:
+                 self._connection.moveJ(target_joints, speed, acceleration)
+                 print("move_j command sent successfully.")
+            except Exception as e:
+                 print(f"Error during move_j: {e}")
 
     def move_l(self, target_pose: list[float], speed: float = 0.1, acceleration: float = 0.5):
         """
@@ -204,11 +204,11 @@ class Robot:
             try:
                 # Example: Adding positional offset - requires careful thought
                 # on coordinate frames in a real system.
-                # final_pose[0] += self._offset[0]
-                # final_pose[1] += self._offset[1]
-                # final_pose[2] += self._offset[2]
+                final_pose[0] += self._offset[0]
+                final_pose[1] += self._offset[1]
+                final_pose[2] += self._offset[2]
                 # Rotational offsets are more complex (matrix multiplication)
-                print(f"  (Note: Offset application is simplified in this simulation)")
+                # print(f"  (Note: Offset application is simplified in this simulation)")
             except Exception as e:
                  print(f"  Warning: Could not apply offset - {e}")
 
@@ -242,16 +242,16 @@ class Robot:
             return None
         print("Simulating getting current joint angles...")
         # Real implementation example (rtde_receive):
-        # try:
-        #     import rtde_receive
-        #     rtde_r = rtde_receive.RTDEReceiveInterface(self.ip)
-        #     actual_q = rtde_r.getActualQ()
-        #     rtde_r.disconnect()
-        #     return actual_q
-        # except Exception as e:
-        #     print(f"Error getting joint angles: {e}")
-        #     return None
-        return [0.0] * 6 # Dummy return value
+        try:
+            import rtde_receive
+            rtde_r = rtde_receive.RTDEReceiveInterface(self.ip)
+            actual_q = rtde_r.getActualQ()
+            rtde_r.disconnect()
+            return actual_q
+        except Exception as e:
+            print(f"Error getting joint angles: {e}")
+            return None
+        # return [0.0] * 6 # Dummy return value
 
     def get_current_pose(self) -> list[float] | None:
         """
@@ -263,16 +263,16 @@ class Robot:
             return None
         print("Simulating getting current TCP pose...")
         # Real implementation example (rtde_receive):
-        # try:
-        #     import rtde_receive
-        #     rtde_r = rtde_receive.RTDEReceiveInterface(self.ip)
-        #     actual_tcp = rtde_r.getActualTCPPose()
-        #     rtde_r.disconnect()
-        #     return actual_tcp
-        # except Exception as e:
-        #     print(f"Error getting TCP pose: {e}")
-        #     return None
-        return [0.1, 0.2, 0.3, 0.0, 0.0, 0.0] # Dummy return value
+        try:
+            import rtde_receive
+            rtde_r = rtde_receive.RTDEReceiveInterface(self.ip)
+            actual_tcp = rtde_r.getActualTCPPose()
+            rtde_r.disconnect()
+            return actual_tcp
+        except Exception as e:
+            print(f"Error getting TCP pose: {e}")
+            return None
+        # return [0.1, 0.2, 0.3, 0.0, 0.0, 0.0] # Dummy return value
 
     def __str__(self) -> str:
         """String representation of the Robot object."""
