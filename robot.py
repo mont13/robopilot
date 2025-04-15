@@ -336,6 +336,19 @@ if __name__ == "__main__":
             target_p = [0.4, -0.2, 0.3, math.pi, 0, 0] # Example pose
             my_robot.move_l(target_p, speed=0.2)
 
+            joint_angles = my_robot.get_current_joints()
+
+            for i in range(4):
+                if i % 2 == 0:
+                    joint_angles[5] += math.pi
+                    joint_angles[4] += math.pi
+                    joint_angles[0] += math.pi
+                else:
+                    joint_angles[5] -= math.pi
+                    joint_angles[4] -= math.pi
+                    joint_angles[0] -= math.pi
+                my_robot.move_j(joint_angles, speed=0.2)
+
             # Move home
             my_robot.move_home(speed=1.0)
             # Disconnect
