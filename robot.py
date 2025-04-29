@@ -30,16 +30,16 @@ class Robot:
                 An initial offset, e.g., for a tool center point (TCP)
                 [x, y, z, rx, ry, rz]. Defaults to None.
         """
-        if not isinstance(ip, str) or not ip: # Basic validation
-             raise ValueError("IP address must be a non-empty string.")
+        if not isinstance(ip, str) or not ip:  # Basic validation
+            raise ValueError("IP address must be a non-empty string.")
         self.ip = ip
         # Use copy.deepcopy to ensure the instance has its own mutable list
         self._home_point: list[float] = copy.deepcopy(HOME_POINT)
-        self._offset: list[float] | None = None # Initialize offset
+        self._offset: list[float] | None = None  # Initialize offset
 
         # Set initial offset using the setter for validation
         if initial_offset is not None:
-            self.offset = initial_offset # Use the setter
+            self.offset = initial_offset  # Use the setter
 
         # Placeholder for actual robot connection object (e.g., from rtde_control)
         self._connection = None
@@ -72,9 +72,9 @@ class Robot:
         if len(new_home_point) != 6:
             raise ValueError("Home point must contain 6 joint angles.")
         if not all(isinstance(j, (int, float)) for j in new_home_point):
-             raise ValueError("All elements in home_point must be numbers.")
+            raise ValueError("All elements in home_point must be numbers.")
 
-        self._home_point = list(new_home_point) # Store a copy
+        self._home_point = list(new_home_point)  # Store a copy
         print(f"Home point updated to: {self._home_point}")
 
     @property
@@ -104,10 +104,11 @@ class Robot:
             print("Offset cleared.")
         elif isinstance(new_offset, list):
             if len(new_offset) != 6:
-                raise ValueError("Offset must contain 6 values [x,y,z,rx,ry,rz].")
+                raise ValueError(
+                    "Offset must contain 6 values [x,y,z,rx,ry,rz].")
             if not all(isinstance(v, (int, float)) for v in new_offset):
                 raise ValueError("All elements in offset must be numbers.")
-            self._offset = list(new_offset) # Store a copy
+            self._offset = list(new_offset)  # Store a copy
             print(f"Offset updated to: {self._offset}")
         else:
             raise TypeError("Offset must be a list of 6 numbers or None.")
@@ -145,7 +146,7 @@ class Robot:
         """
         print(f"Simulating disconnection from robot at {self.ip}...")
         # Example with rtde_control
-        if hasattr(self._connection, 'disconnect'): # Check if it's an rtde obj
+        if hasattr(self._connection, 'disconnect'):  # Check if it's an rtde obj
             self._connection.disconnect()
         self._connection = None
         # print("Disconnected (simulated).")
@@ -164,18 +165,18 @@ class Robot:
             return
 
         if not isinstance(target_joints, list) or len(target_joints) != 6:
-             print("Error: target_joints must be a list of 6 numbers.")
-             return
+            print("Error: target_joints must be a list of 6 numbers.")
+            return
 
         # print(f"Simulating MOVEJ to: {target_joints}")
         print(f"  Speed: {speed} rad/s, Acceleration: {acceleration} rad/s^2")
         # Real implementation example (rtde_control):
         if self._connection:
             try:
-                 self._connection.moveJ(target_joints, speed, acceleration)
-                 print("move_j command sent successfully.")
+                self._connection.moveJ(target_joints, speed, acceleration)
+                print("move_j command sent successfully.")
             except Exception as e:
-                 print(f"Error during move_j: {e}")
+                print(f"Error during move_j: {e}")
 
     def move_l(self, target_pose: list[float], speed: float = 0.1, acceleration: float = 0.5):
         """
@@ -192,11 +193,11 @@ class Robot:
             return
 
         if not isinstance(target_pose, list) or len(target_pose) != 6:
-             print("Error: target_pose must be a list of 6 numbers.")
-             return
+            print("Error: target_pose must be a list of 6 numbers.")
+            return
 
         # Apply offset if it exists (simple addition for position part)
-        final_pose = list(target_pose) # Make a copy
+        final_pose = list(target_pose)  # Make a copy
         if self._offset:
             # This is a simplistic offset application (additive).
             # Real TCP handling is more complex involving transformations.
@@ -210,10 +211,10 @@ class Robot:
                 # Rotational offsets are more complex (matrix multiplication)
                 # print(f"  (Note: Offset application is simplified in this simulation)")
             except Exception as e:
-                 print(f"  Warning: Could not apply offset - {e}")
+                print(f"  Warning: Could not apply offset - {e}")
 
-
-        print(f"Simulating MOVEL to: {final_pose}") # Print pose potentially modified by offset
+        # Print pose potentially modified by offset
+        print(f"Simulating MOVEL to: {final_pose}")
         print(f"  Speed: {speed} m/s, Acceleration: {acceleration} m/s^2")
         # Real implementation example (rtde_control):
         # if self._connection:
@@ -285,7 +286,7 @@ class Robot:
     def __repr__(self) -> str:
         """Detailed representation for debugging."""
         return (f"Robot(ip='{self.ip}', "
-                f"initial_offset={self.offset})") # Show initial args maybe
+                f"initial_offset={self.offset})")  # Show initial args maybe
 
 
 # --- Example Usage ---
@@ -299,11 +300,6 @@ if __name__ == "__main__":
         home = my_robot.home_point
         print(f"\nCurrent Home Point: {home}")
 
-        # Set a new home point
-        new_home = [0, -math.pi/2, math.pi/4, -math.pi/2, -math.pi/2, 0]
-        my_robot.home_point = new_home
-        print(f"Get New Home Point: {my_robot.home_point}")
-
         # Try setting an invalid home point
         try:
             my_robot.home_point = [1, 2, 3]
@@ -314,7 +310,7 @@ if __name__ == "__main__":
         print(f"\nCurrent Offset: {my_robot.offset}")
 
         # Set an offset (e.g., TCP)
-        tcp_offset = [0, 0, 0.15, 0, 0, 0] # 15cm Z offset, 90 deg Z rotation
+        tcp_offset = [0, 0, 0.15, 0, 0, 0]  # 15cm Z offset, 90 deg Z rotation
         my_robot.offset = tcp_offset
         print(f"Get New Offset: {my_robot.offset}")
 
@@ -328,33 +324,26 @@ if __name__ == "__main__":
             # Move home
             my_robot.move_home(speed=1.0)
 
-            # Move to specific joints
-            target_j = [0.5, -1.0, 1.0, -1.5, -0.5, 0.1]
-            my_robot.move_j(target_j)
-
-            # Move to a Cartesian pose (will show offset being applied)
-            target_p = [0.4, -0.2, 0.3, math.pi, 0, 0] # Example pose
-            my_robot.move_l(target_p, speed=0.2)
-
             joint_angles = my_robot.get_current_joints()
 
-            for i in range(4):
-                if i % 2 == 0:
-                    joint_angles[5] += math.pi
-                    joint_angles[4] += math.pi
-                    joint_angles[0] += math.pi
-                else:
-                    joint_angles[5] -= math.pi
-                    joint_angles[4] -= math.pi
-                    joint_angles[0] -= math.pi
-                my_robot.move_j(joint_angles, speed=0.2)
+            if joint_angles is not None:
+                for i in range(4):
+                    if i % 2 == 0:
+                        joint_angles[5] += math.pi
+                        joint_angles[4] += math.pi
+                        joint_angles[0] += math.pi
+                    else:
+                        joint_angles[5] -= math.pi
+                        joint_angles[4] -= math.pi
+                        joint_angles[0] -= math.pi
+                    my_robot.move_j(joint_angles, speed=0.2)
 
             # Move home
             my_robot.move_home(speed=1.0)
             # Disconnect
             my_robot.disconnect()
         else:
-             print("\nCould not connect to the robot (simulation).")
+            print("\nCould not connect to the robot (simulation).")
 
         print("\nRobot object final state:")
         print(my_robot)
