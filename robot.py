@@ -275,6 +275,15 @@ class Robot:
             return None
         # return [0.1, 0.2, 0.3, 0.0, 0.0, 0.0] # Dummy return value
 
+    def set_teach_mode(self, freedrive=True):
+        """
+        If param is True, set robot to freemode.
+        """
+        if freedrive:
+            self._connection.teachMode()
+        else:
+            self._connection.endTeachMode()
+
     def __str__(self) -> str:
         """String representation of the Robot object."""
         conn_status = "Connected (Simulated)" if self._connection else "Disconnected"
