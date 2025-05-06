@@ -351,7 +351,7 @@ class Robot:
         if not (0 <= value <= 1):
             raise ValueError("Analog value must be between 0 and 1.")
 
-        self._connection_io.setAnalogOutputVoltage(index, value)
+        self._connection_io.setAnalogOutputCurrent(index, value)
         print(f"Set Analog Output {index} to {value}V")
 
     def read_analog_output(self, index=1):
