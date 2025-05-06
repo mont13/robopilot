@@ -54,9 +54,9 @@ class Robot:
 
         # Placeholder for actual robot connection object (e.g., from rtde_control)
         self._connection = None
-        print(f"Robot object created for IP: {self.ip}")
-        print(f"Default home point set to: {self._home_point}")
-        print(f"Initial offset: {self._offset}")
+        # print(f"Robot object created for IP: {self.ip}")
+        # print(f"Default home point set to: {self._home_point}")
+        # print(f"Initial offset: {self._offset}")
 
     # --- Getters and Setters ---
 
@@ -86,7 +86,7 @@ class Robot:
             raise ValueError("All elements in home_point must be numbers.")
 
         self._home_point = list(new_home_point)  # Store a copy
-        print(f"Home point updated to: {self._home_point}")
+        # print(f"Home point updated to: {self._home_point}")
 
     @property
     def offset(self) -> list[float] | None:
@@ -120,7 +120,7 @@ class Robot:
             if not all(isinstance(v, (int, float)) for v in new_offset):
                 raise ValueError("All elements in offset must be numbers.")
             self._offset = list(new_offset)  # Store a copy
-            print(f"Offset updated to: {self._offset}")
+            # print(f"Offset updated to: {self._offset}")
         else:
             raise TypeError("Offset must be a list of 6 numbers or None.")
 
@@ -128,11 +128,11 @@ class Robot:
 
     def connect(self):
         """
-        Placeholder method to establish a connection to the robot.
+        method to establish a connection to the robot.
         In a real implementation, this would use a library like rtde_control
         or urx to connect to self.ip.
         """
-        print(f"Simulating connection to robot at {self.ip}...")
+        print(f"🌐 Connecting to robot at {self.ip}...")
         # Example with rtde_control (requires installation: pip install rtde_control)
         try:
             import rtde_control
@@ -141,7 +141,7 @@ class Robot:
             self._connection_read = rtde_receive.RTDEReceiveInterface(self.ip)
             self._connection = rtde_control.RTDEControlInterface(self.ip)
             self._connection_io = rtde_io.RTDEIOInterface(self.ip)
-            print(f"Successfully connected to robot at {self.ip}.")
+            print(f"✅ Successfully connected to robot at {self.ip}.")
             return True
         except ImportError:
             print("Warning: 'rtde_control' library not found. Cannot connect.")
@@ -161,23 +161,22 @@ class Robot:
 
     def disconnect(self):
         """
-        Placeholder method to disconnect from the robot.
+        method to disconnect from the robot.
         """
-        print(f"Simulating disconnection from robot at {self.ip}...")
-        # Example with rtde_control
+
         if hasattr(self._connection, 'disconnect'):  # Check if it's an rtde obj
             self._connection.disconnect()
-            print("closing rtde_control")
+            # print("closing rtde_control")
         if hasattr(self._connection_read, 'disconnect'):  # Check if it's an rtde obj
             self._connection_read.disconnect()
-            print("closing read")
+            # print("closing read")
         if hasattr(self._connection_io, 'disconnect'):  # Check if it's an rtde obj
             self._connection_io.disconnect()
-            print("closing io")
+            # print("closing io")
         self._connection = None
         self._connection_read = None
         self._connection_io = None
-        # print("Disconnected (simulated).")
+        print("🛑 Disconnected")
 
     def move_j(self, target_joints: list[float], speed: float = 0.4, acceleration: float = 0.5):
         """
@@ -235,7 +234,7 @@ class Robot:
         """
         Moves the robot to its defined home position using move_j.
         """
-        print("Moving to home position...")
+        print("🏚️ Moving to home position...")
         self.move_j(self._home_point, speed, acceleration)
 
     def get_current_joints(self) -> list[float] | None:
@@ -246,7 +245,6 @@ class Robot:
         if not self._connection:
             print("Error: Robot not connected.")
             return None
-        print("Simulating getting current joint angles...")
         # Real implementation example (rtde_receive):
         try:
             import rtde_receive
@@ -267,7 +265,6 @@ class Robot:
         if not self._connection:
             print("Error: Robot not connected.")
             return None
-        print("Simulating getting current TCP pose...")
         # Real implementation example (rtde_receive):
         try:
             import rtde_receive
@@ -276,7 +273,6 @@ class Robot:
             rtde_r.disconnect()
             return actual_tcp
         except Exception as e:
-            print(f"Error getting TCP pose: {e}")
             return None
         # return [0.1, 0.2, 0.3, 0.0, 0.0, 0.0] # Dummy return value
 
@@ -301,7 +297,7 @@ class Robot:
             raise ValueError("Index must be between 0 and 7.")
 
         self._connection_io.setStandardDigitalOut(index, value)
-        print(f"Set Digital Output {index} to {'ON' if value else 'OFF'}")
+        # print(f"Set Digital Output {index} to {'ON' if value else 'OFF'}")
 
     def read_digital_input(self, index):
         """
@@ -352,8 +348,8 @@ class Robot:
         if not (0 <= value <= 1):
             raise ValueError("Analog value must be between 0 and 1.")
 
-        # self._connection_io.setAnalogOutputVoltage(index, value)
-        print(f"Set Analog Output {index} to {value}V")
+        self._connection_io.setAnalogOutputVoltage(index, value)
+        # print(f"Set Analog Output {index} to {value}V")
 
     def read_analog_output(self, index=1):
         """
