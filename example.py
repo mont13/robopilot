@@ -56,15 +56,19 @@ if __name__ == "__main__":
                 my_robot.move_home()
 
                 stop = False
+                # while input() != "z":
                 while not stop:
+                    time.sleep(0.2)
                     if my_robot.read_digital_input(START_SENSOR):
                         my_robot.write_digital_output(CONVEYOR_ACTIVATE_PIN, True)
                         my_robot.write_analog_output(CONVEYOR_SPEED_PIN, 0.3)
+                        # time.sleep(0.1)
 
                     if my_robot.read_digital_input(END_SENSOR):
                         my_robot.write_digital_output(CONVEYOR_ACTIVATE_PIN, False)
                         my_robot.write_analog_output(CONVEYOR_SPEED_PIN, 0.0)
                         stop = True
+                        # time.sleep(0.1)
 
                 n1 = [-22.06, -99.35, -87.09, -80.57, 89.59, 338.07]
                 my_robot.move_j(degree_to_rad(n1))
@@ -74,15 +78,15 @@ if __name__ == "__main__":
                 # gripper OPEN
 
                 my_gripper.connect()
-                time.sleep(2)
+                time.sleep(1)
 
                 my_gripper.open_and_wait()
-                time.sleep(2)
+                time.sleep(1)
 
                 my_gripper.close_connection()
-                time.sleep(2)
+                time.sleep(1)
 
-                time.sleep(2)
+                time.sleep(1)
 
                 # move to POSITION
 
@@ -97,13 +101,13 @@ if __name__ == "__main__":
                 # gripper CLOSE
 
                 my_gripper.connect()
-                time.sleep(2)
+                time.sleep(1)
 
                 my_gripper.close_and_wait()
-                time.sleep(2)
+                time.sleep(1)
 
                 my_gripper.close_connection()
-                time.sleep(2)
+                time.sleep(1)
 
 
                 # move HOME
@@ -123,13 +127,13 @@ if __name__ == "__main__":
                 my_robot.disconnect()
 
                 my_gripper.connect()
-                time.sleep(2)
+                time.sleep(1)
 
                 my_gripper.open_and_wait()
-                time.sleep(2)
+                time.sleep(1)
 
                 my_gripper.close_connection()
-                time.sleep(2)
+                time.sleep(1)
 
                 my_robot.connect()
 
@@ -139,15 +143,6 @@ if __name__ == "__main__":
 
                 # Disconnect
                 my_robot.disconnect()
-
-                my_gripper.connect()
-                time.sleep(2)
-
-                my_gripper.open_and_wait()
-                time.sleep(2)
-
-                my_gripper.close_connection()
-                time.sleep(2)
 
                 my_robot.connect()
 
