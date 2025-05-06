@@ -317,7 +317,8 @@ class Robot:
             raise ValueError("Index must be between 0 and 7.")
 
         value = self._connection_read.getDigitalInState(index)
-        print(f"Digital Input {index} is {'ON' if value else 'OFF'}")
+        # print(self._connection_read.getActualDigitalInputBits())
+        # print(f"Digital Input {index} is {'ON' if value else 'OFF'}")
         return value
 
     def read_digital_output(self, index):
@@ -334,7 +335,7 @@ class Robot:
             raise ValueError("Index must be between 0 and 7.")
 
         value = self._connection_read.getDigitalOutState(index)
-        print(f"Digital Input {index} is {'ON' if value else 'OFF'}")
+        # print(f"Digital Input {index} is {'ON' if value else 'OFF'}")
         return value
 
     def write_analog_output(self, index, value):
@@ -351,7 +352,7 @@ class Robot:
         if not (0 <= value <= 1):
             raise ValueError("Analog value must be between 0 and 1.")
 
-        self._connection_io.setAnalogOutputCurrent(index, value)
+        # self._connection_io.setAnalogOutputVoltage(index, value)
         print(f"Set Analog Output {index} to {value}V")
 
     def read_analog_output(self, index=1):
