@@ -3,6 +3,14 @@ from __future__ import annotations
 import math
 import copy  # To ensure we don't modify the original default HOME_POINT
 
+
+def degree_to_rad(arr):
+    new_arr = []
+    for angle in arr:
+        new_arr.append(math.radians(angle))
+    return new_arr
+
+
 # Default home point for the robot (joint angles in radians)
 # [Base, Shoulder, Elbow, Wrist1, Wrist2, Wrist3]
 HOME_POINT = [-0.0, -math.pi / 2, 0.0, -math.pi / 2, 0.0, 0.0]
@@ -30,8 +38,11 @@ class Robot:
                 An initial offset, e.g., for a tool center point (TCP)
                 [x, y, z, rx, ry, rz]. Defaults to None.
         """
+        self._connection_io = None
+        self._connection_read = None
         if not isinstance(ip, str) or not ip:  # Basic validation
             raise ValueError("IP address must be a non-empty string.")
+        self.ip = ip
         self.ip = ip
         # Use copy.deepcopy to ensure the instance has its own mutable list
         self._home_point: list[float] = copy.deepcopy(HOME_POINT)
@@ -125,16 +136,24 @@ class Robot:
         # Example with rtde_control (requires installation: pip install rtde_control)
         try:
             import rtde_control
+            import rtde_receive
+            import rtde_io
+            self._connection_read = rtde_receive.RTDEReceiveInterface(self.ip)
             self._connection = rtde_control.RTDEControlInterface(self.ip)
+            self._connection_io = rtde_io.RTDEIOInterface(self.ip)
             print(f"Successfully connected to robot at {self.ip}.")
             return True
         except ImportError:
             print("Warning: 'rtde_control' library not found. Cannot connect.")
+            self._connection_read = None
             self._connection = None
+            self._connection_io = None
             return False
         except Exception as e:
             print(f"Error connecting to robot at {self.ip}: {e}")
+            self._connection_read = None
             self._connection = None
+            self._connection_io = None
             return False
         # self._connection = "Simulated Connection" # Placeholder
         # print("Connection successful (simulated).")
@@ -148,10 +167,19 @@ class Robot:
         # Example with rtde_control
         if hasattr(self._connection, 'disconnect'):  # Check if it's an rtde obj
             self._connection.disconnect()
+            print("closing rtde_control")
+        if hasattr(self._connection_read, 'disconnect'):  # Check if it's an rtde obj
+            self._connection_read.disconnect()
+            print("closing read")
+        if hasattr(self._connection_io, 'disconnect'):  # Check if it's an rtde obj
+            self._connection_io.disconnect()
+            print("closing io")
         self._connection = None
+        self._connection_read = None
+        self._connection_io = None
         # print("Disconnected (simulated).")
 
-    def move_j(self, target_joints: list[float], speed: float = 0.5, acceleration: float = 1.0):
+    def move_j(self, target_joints: list[float], speed: float = 0.4, acceleration: float = 0.5):
         """
         Placeholder method to move the robot to target joint angles.
 
@@ -178,53 +206,30 @@ class Robot:
             except Exception as e:
                 print(f"Error during move_j: {e}")
 
-    def move_l(self, target_pose: list[float], speed: float = 0.1, acceleration: float = 0.5):
+    def move_l(self, target_joints: list[float], speed: float = 0.1, acceleration: float = 0.2):
         """
-        Placeholder method to move the robot linearly to a target pose.
+        Placeholder method to move the robot to target joint angles.
 
         Args:
-            target_pose (list[float]): Target pose [x, y, z, rx, ry, rz]
-                                      (meters and radians).
-            speed (float): Tool speed (m/s).
-            acceleration (float): Tool acceleration (m/s^2).
+            target_joints (list[float]): List of 6 target joint angles (radians).
+            speed (float): Joint speed (rad/s).
+            acceleration (float): Joint acceleration (rad/s^2).
         """
         if not self._connection:
             print("Error: Robot not connected. Call connect() first.")
             return
 
-        if not isinstance(target_pose, list) or len(target_pose) != 6:
-            print("Error: target_pose must be a list of 6 numbers.")
+        if not isinstance(target_joints, list) or len(target_joints) != 6:
+            print("Error: target_joints must be a list of 6 numbers.")
             return
 
-        # Apply offset if it exists (simple addition for position part)
-        final_pose = list(target_pose)  # Make a copy
-        if self._offset:
-            # This is a simplistic offset application (additive).
-            # Real TCP handling is more complex involving transformations.
-            print(f"  Applying offset: {self._offset}")
+        print(f"  Speed: {speed} rad/s, Acceleration: {acceleration} rad/s^2")
+        if self._connection:
             try:
-                # Example: Adding positional offset - requires careful thought
-                # on coordinate frames in a real system.
-                final_pose[0] += self._offset[0]
-                final_pose[1] += self._offset[1]
-                final_pose[2] += self._offset[2]
-                # Rotational offsets are more complex (matrix multiplication)
-                # print(f"  (Note: Offset application is simplified in this simulation)")
+                self._connection.moveL_FK(target_joints, speed, acceleration)
+                print("move_l command sent successfully.")
             except Exception as e:
-                print(f"  Warning: Could not apply offset - {e}")
-
-        # Print pose potentially modified by offset
-        print(f"Simulating MOVEL to: {final_pose}")
-        print(f"  Speed: {speed} m/s, Acceleration: {acceleration} m/s^2")
-        # Real implementation example (rtde_control):
-        # if self._connection:
-        #     try:
-        #         # Note: Real TCP handling might involve setting TCP via
-        #         # self._connection.setTcp(self._offset) before the move
-        #         self._connection.moveL(target_pose, speed, acceleration) # Usually moves the current TCP
-        #         print("move_l command sent successfully.")
-        #     except Exception as e:
-        #          print(f"Error during move_l: {e}")
+                print(f"Error during move_l: {e}")
 
     def move_home(self, speed: float = 0.5, acceleration: float = 1.0):
         """
@@ -284,6 +289,87 @@ class Robot:
         else:
             self._connection.endTeachMode()
 
+    def write_digital_output(self, index, value):
+        """
+        Write a digital output at the specified index.
+
+        Args:
+            index: Index of the digital output (0-7).
+            value: True (1) for ON, False (0) for OFF.
+        """
+        if index < 0 or index > 7:
+            raise ValueError("Index must be between 0 and 7.")
+
+        self._connection_io.setStandardDigitalOut(index, value)
+        print(f"Set Digital Output {index} to {'ON' if value else 'OFF'}")
+
+    def read_digital_input(self, index):
+        """
+        Read the value of a digital input at the specified index.
+
+        Args:
+            index: Index of the digital input (0-7).
+
+        Returns:
+            bool: True if the input is ON, False if OFF.
+        """
+        if index < 0 or index > 7:
+            raise ValueError("Index must be between 0 and 7.")
+
+        value = self._connection_read.getDigitalInState(index)
+        print(f"Digital Input {index} is {'ON' if value else 'OFF'}")
+        return value
+
+    def read_digital_output(self, index):
+        """
+        Read the value of a digital output at the specified index.
+
+        Args:
+            index: Index of the digital input (0-7).
+
+        Returns:
+            bool: True if the input is ON, False if OFF.
+        """
+        if index < 0 or index > 7:
+            raise ValueError("Index must be between 0 and 7.")
+
+        value = self._connection_read.getDigitalOutState(index)
+        print(f"Digital Input {index} is {'ON' if value else 'OFF'}")
+        return value
+
+    def write_analog_output(self, index, value):
+        """
+        Write an analog output at the specified index.
+
+        Args:
+            index: Index of the analog output (0-1).
+            value: Analog value (0 to 1, corresponding to 0-10V).
+        """
+        if index < 0 or index > 1:
+            raise ValueError("Index must be between 0 and 1.")
+
+        if not (0 <= value <= 1):
+            raise ValueError("Analog value must be between 0 and 1.")
+
+        self._connection_io.setAnalogOutputVoltage(index, value)
+        print(f"Set Analog Output {index} to {value}V")
+
+    def read_analog_output(self, index=1):
+        """
+        Read an analog output at the specified index.
+
+        Args:
+            index: Index of the analog output (0-1).
+            value: Analog value (0 to 1, corresponding to 0-10V).
+        """
+        if index < 0 or index > 1:
+            raise ValueError("Index must be between 0 and 1.")
+
+        if index == 1:
+            return self._connection_read.getStandardAnalogOutput1()
+        else:
+            return self._connection_read.getStandardAnalogOutput0()
+
     def __str__(self) -> str:
         """String representation of the Robot object."""
         conn_status = "Connected (Simulated)" if self._connection else "Disconnected"
@@ -327,28 +413,18 @@ if __name__ == "__main__":
         print("\n--- Simulating Robot Movement ---")
         if my_robot.connect():
             # Get simulated current state
-            print("Current Joints:", my_robot.get_current_joints())
-            print("Current Pose:", my_robot.get_current_pose())
 
             # Move home
             my_robot.move_home(speed=1.0)
 
-            joint_angles = my_robot.get_current_joints()
+            n3 = [-5.6, -77.07, -57.8, -131.88, 84.85, 356.87]
+            n4 = [-14.84, -70.79, -107.32, -90.47, 88.83, 348.57]
 
-            if joint_angles is not None:
-                for i in range(4):
-                    if i % 2 == 0:
-                        joint_angles[5] += math.pi
-                        joint_angles[4] += math.pi
-                        joint_angles[0] += math.pi
-                    else:
-                        joint_angles[5] -= math.pi
-                        joint_angles[4] -= math.pi
-                        joint_angles[0] -= math.pi
-                    my_robot.move_j(joint_angles, speed=0.2)
+            n1 = [-23.16, -95.31, -98.63, -72.73, 91.14, 337.99]
+            my_robot.move_j(degree_to_rad(n3))
 
-            # Move home
-            my_robot.move_home(speed=1.0)
+            n2 = [-20.87, -102.9, -100.83, -65.71, 88.03, 337.10]
+            my_robot.move_l(degree_to_rad(n4))
             # Disconnect
             my_robot.disconnect()
         else:
