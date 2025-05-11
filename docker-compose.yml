@@ -1,0 +1,69 @@
+services:
+  server:
+    image: ${IMAGE_NAME:-server:latest}
+    ports:
+      - "8009:8009"
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: ${TARGET:-development}
+    environment:
+      POSTGRES_DB_HOST: postgresql
+      APP_RELOAD: "true"
+      LMSTUDIO_HOST: "host.docker.internal:1234"
+    volumes:
+      - ./backend/app:/home/appuser/app
+      - ./backend/voices:/home/appuser/voices
+      - ./backend/scripts:/home/appuser/scripts
+      - ./records:/home/appuser/records
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - db
+    links:
+      - db:postgresql
+    networks:
+      - app-network
+    # Initialize voices if they don't exist
+    command: >
+      bash -c "
+        if [ ! -f /home/appuser/voices/*.onnx ]; then
+          echo 'No voice models found, downloading default voices...'
+          /home/appuser/scripts/download_voices.sh
+        fi
+        python3 -m app.main
+      "
+
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: fastapi_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    networks:
+      - app-network
+
+  frontend:
+    image: ${IMAGE_NAME:-frontend:latest}
+    ports:
+      - "3000:3000"
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      REACT_APP_API_URL: http://server:8009
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./frontend:/home/appuser/frontend
+      - /home/appuser/frontend/node_modules
+    depends_on:
+      - server
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

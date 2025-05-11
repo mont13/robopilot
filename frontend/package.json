@@ -1,0 +1,41 @@
+{
+  "name": "realtime-examples",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@lmstudio/sdk": "^1.1.1",
+    "@mintplex-labs/piper-tts-web": "^1.0.4",
+    "bufferutil": "^4.0.9",
+    "extendable-media-recorder": "^9.2.24",
+    "extendable-media-recorder-wav-encoder": "^7.0.127",
+    "fs": "^0.0.1-security",
+    "next": "15.3.1",
+    "openai": "^4.97.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "utf-8-validate": "^6.0.5",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4.1.5",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "cssnano": "^6.0.1",
+    "eslint": "^9",
+    "eslint-config-next": "15.3.1",
+    "lightningcss": "^1.30.0",
+    "postcss": "^8",
+    "tailwindcss": "^4.1.5",
+    "typescript": "^5"
+  }
+}
