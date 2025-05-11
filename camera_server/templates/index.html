@@ -4,15 +4,54 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>iPhone Streaming App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        video {
+            width: 100%;
+            max-width: 400px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            padding: 8px 16px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        .note {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
 </head>
 <body>
     <h2>📱 iPhone Camera & Mic Streaming</h2>
-    <video id="preview" autoplay playsinline muted style="width:100%;max-width:400px;"></video>
+    <video id="preview" autoplay playsinline muted></video>
     <div>
         <button id="startBtn">Start Streaming</button>
         <button id="stopBtn" disabled>Stop Streaming</button>
     </div>
     <p id="status"></p>
+    
+    <div class="note">
+        <h3>Stream Access</h3>
+        <p>When streaming is active, you can access:</p>
+        <ul>
+            <li>Video only stream: <code>http://localhost:8000/stream/video</code></li>
+            <li>Audio only stream: <code>http://localhost:8000/stream/audio</code></li>
+        </ul>
+        <p>Access these with FFplay:</p>
+        <code>ffplay http://localhost:8000/stream/audio</code>
+    </div>
+    
     <script src="/static/js/stream.js"></script>
 </body>
 </html>

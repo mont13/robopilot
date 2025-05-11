@@ -51,4 +51,11 @@ stopBtn.onclick = () => {
     status.textContent = 'Stopped.';
     startBtn.disabled = false;
     stopBtn.disabled = true;
+    
+    // Reset preview
+    if (preview.srcObject) {
+        const tracks = preview.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+        preview.srcObject = null;
+    }
 };
