@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+opencv-python
+numpy
+scipy
+pydub
+moviepy
+python-multipart
+jinja2
+websockets
+
+# External dependencies that need to be installed separately:
+# ffmpeg - Install via package manager:
+#   macOS: brew install ffmpeg
+#   Ubuntu/Debian: apt-get install ffmpeg
+#   Windows: download from https://ffmpeg.org/download.html

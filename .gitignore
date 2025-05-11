@@ -1,1 +1,12 @@
 ./venv
+.DS_Store
+__pycache__/
+/camera_server/venv
+/camera_server/.venv
+/camera_server/__pycache__/
+/camera_server/.DS_Store
+
+# Ignore recorded media files
+/camera_server/recordings/
+/camera_server/video_only/
+/camera_server/audio_only/
