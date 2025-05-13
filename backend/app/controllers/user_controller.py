@@ -3,7 +3,6 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi_restful.cbv import cbv
 from pydantic import BaseModel
 
 from app.middleware.auth import (
@@ -40,7 +39,6 @@ class AuthErrorResponse(BaseModel):
     detail: str
 
 
-@cbv(user_router)
 class UserController:
     """
     Controller for user-related endpoints

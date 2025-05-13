@@ -1,23 +1,41 @@
-FROM node:22
+FROM node:22-alpine AS builder
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y python3 make g++ python3-pip
+RUN apk add --no-cache python3 make g++ build-base
 
-# Create a non-root user to own the application code
-RUN groupadd -r appuser && useradd -r -g appuser -m appuser
+WORKDIR /app
 
-WORKDIR /home/appuser/frontend
+# Copy package files
+COPY package.json package-lock.json* ./
 
-# Install dependencies based on the preferred package manager
-COPY --chown=appuser:appuser package.json package-lock.json* ./
-RUN npm ci
+# Install dependencies
+RUN yarn install --frozen-lockfile
 
-# Expose the port the app will run on
+# Copy all project files
+COPY . .
+
+# Build the application
+RUN yarn run build
+
+# Production image
+FROM node:22-alpine AS production
+
+# Install Python for node-gyp
+RUN apk add --no-cache python3 make g++ build-base
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install only production dependencies
+RUN yarn install --frozen-lockfile
+
+# Copy built application from builder stage
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/next.config.js ./
+
 EXPOSE 3000
 
-# Set correct permissions and switch to non-root user for better security
-RUN chown -R appuser:appuser /home/appuser
-USER appuser
-
-# Start the application in development mode with hot reloading enabled
-CMD ["npm", "run", "dev", "--", "--turbopack"]
+CMD ["npm", "run", "start"]

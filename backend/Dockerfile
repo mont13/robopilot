@@ -9,7 +9,7 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     PYSETUP_PATH="/opt/pysetup" \
     VENV_PATH="/opt/pysetup/.venv"\
-    POETRY_VERSION=1.4.2 \
+    POETRY_VERSION=2.1.0 \
     DEBIAN_FRONTEND=noninteractive
 
 ENV PATH="$POETRY_HOME/bin:$VENV_PATH/bin:$PATH"
@@ -33,6 +33,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Requirements for FastAPI app
     curl \
     iproute2 \
+    # Boost libraries for ur_rtde
+    libboost-all-dev \
     # Clean up
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -86,8 +88,20 @@ RUN mkdir -p /usr/local/lib/piper_phonemize && \
     cp -r /opt/piper/lib/Linux-$(uname -m)/piper_phonemize/* /usr/local/lib/piper_phonemize/ && \
     ldconfig 2>/dev/null || true
 
-# Set environment variables for piper-tts to find libraries
-ENV LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib/piper_phonemize"
+# Clone and build ur_rtde from source
+WORKDIR /opt
+RUN git clone https://gitlab.com/sdurobotics/ur_rtde.git
+WORKDIR /opt/ur_rtde
+# Initialize pybind11 submodule for Python bindings
+RUN git submodule update --init --recursive
+RUN mkdir build && cd build && \
+    cmake .. -DPYTHON_BINDINGS=ON -DBUILD_PYTHON_MODULE=ON && \
+    make -j4 && \
+    make install && \
+    ldconfig
+
+# Set environment variables for shared libraries
+ENV LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib/piper_phonemize:/usr/local/lib/ur_rtde"
 
 # Create user
 RUN addgroup --gid 1000 appuser && adduser --uid 1000 --system --ingroup appuser appuser
@@ -104,7 +118,7 @@ RUN curl -sSL https://install.python-poetry.org | python3 -
 COPY --chown=appuser ./pyproject.toml ./poetry.lock ./
 
 # Configure Poetry
-RUN poetry install
+RUN poetry install --no-root
 
 # ------------------------------------------------------------------------------------
 # 'development' stage installs all dev deps and can be used to develop code
@@ -113,7 +127,7 @@ FROM base AS development
 # Install dev libs
 WORKDIR $PYSETUP_PATH
 COPY --chown=appuser ./pyproject.toml ./poetry.lock ./
-RUN poetry install
+RUN poetry install --no-root
 
 WORKDIR /home/appuser
 

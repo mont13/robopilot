@@ -14,7 +14,10 @@ const ModeSelection: React.FC<ModeSelectionProps> = ({ onSelectMode }) => {
 
         <div className="space-y-3 sm:space-y-4">
           <button
-            onClick={() => onSelectMode("chat")}
+            onClick={() => {
+              sessionStorage.setItem("interactionMode", "chat");
+              onSelectMode("chat");
+            }}
             className="w-full bg-blue-500 hover:bg-blue-600 text-white p-3 sm:p-4 rounded-lg flex items-center justify-center transition-colors"
           >
             <div>
@@ -40,7 +43,10 @@ const ModeSelection: React.FC<ModeSelectionProps> = ({ onSelectMode }) => {
           </button>
 
           <button
-            onClick={() => onSelectMode("voice")}
+            onClick={() => {
+              sessionStorage.setItem("interactionMode", "voice");
+              onSelectMode("voice");
+            }}
             className="w-full bg-green-500 hover:bg-green-600 text-white p-3 sm:p-4 rounded-lg flex items-center justify-center transition-colors"
           >
             <div>

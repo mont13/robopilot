@@ -9,10 +9,11 @@ from starlette.exceptions import HTTPException
 
 from app.config import exception_config as exh
 from app.config.settings import Environment, get_database_settings, get_settings
+from app.controllers.llm_connection_controller import router as llm_connection_router
+from app.controllers.lmstudio_controller import router as lmstudio_router
 from app.controllers.stt_controller import router as stt_router
 from app.controllers.tts_controller import router as tts_router
 from app.controllers.user_controller import user_router
-from app.controllers.lmstudio_controller import router as lmstudio_router
 from app.utils import db_session
 
 settings = get_settings()
@@ -49,10 +50,11 @@ def create_application() -> FastAPI:
     application.add_exception_handler(HTTPException, exh.http_exception_handler)
 
     # Include new routers
-    # application.include_router(user_router, prefix="/api")
+    application.include_router(user_router, prefix="/api")
     application.include_router(tts_router, prefix="/api")
     application.include_router(stt_router, prefix="/api")
     application.include_router(lmstudio_router, prefix="/api")
+    application.include_router(llm_connection_router, prefix="/api")
 
     @application.on_event("startup")
     async def initialize():

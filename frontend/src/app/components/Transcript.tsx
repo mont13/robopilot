@@ -18,6 +18,7 @@ export interface TranscriptProps {
   isRecording: boolean;
   isProcessingVoice: boolean;
   onToggleRecording: () => void;
+  vadEnabled?: boolean;
 }
 
 function Transcript({
@@ -30,12 +31,12 @@ function Transcript({
   isRecording,
   isProcessingVoice,
   onToggleRecording,
+  vadEnabled = false,
 }: TranscriptProps) {
   const { transcriptItems } = useTranscript();
   const { currentSession, messages } = useLMStudio();
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const [prevLogs, setPrevLogs] = useState<TranscriptItem[]>([]);
-  const [justCopied, setJustCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -68,27 +69,9 @@ function Transcript({
     }
   }, [canSend, mode]);
 
-  const handleCopyTranscript = useCallback(async () => {
-    if (!transcriptRef.current) return;
-    try {
-      await navigator.clipboard.writeText(transcriptRef.current.innerText);
-      setJustCopied(true);
-      setTimeout(() => setJustCopied(false), 1500);
-    } catch (error) {
-      console.error("Failed to copy transcript:", error);
-    }
-  }, [transcriptRef]);
-
   return (
     <div className="flex flex-col flex-1 bg-white min-h-0 rounded-xl">
       <div className="relative flex-1 min-h-0">
-        <button
-          onClick={handleCopyTranscript}
-          className="absolute w-20 top-4 right-4 z-10 text-sm px-3 py-2 rounded-full bg-gray-200 hover:bg-gray-300 transition-colors"
-        >
-          {justCopied ? "Copied!" : "Copy"}
-        </button>
-
         <div
           ref={transcriptRef}
           className="overflow-auto p-4 pt-12 flex flex-col gap-y-4 h-full"
@@ -230,7 +213,7 @@ function Transcript({
             <button
               onClick={onSendMessage}
               disabled={!canSend || !userText.trim()}
-              className="bg-gray-900 text-white rounded-full px-2 py-2 disabled:opacity-50"
+              className="bg-gray-400 text-white rounded-full px-3 py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Image src="/arrow.svg" alt="Send" width={24} height={24} />
             </button>
@@ -242,6 +225,12 @@ function Transcript({
               isProcessing={isProcessingVoice}
               onToggleRecording={onToggleRecording}
               disabled={!canSend}
+              isVadActive={
+                vadEnabled &&
+                !isRecording &&
+                !isProcessingVoice &&
+                !ttsPlayingMessageId
+              }
               className="mx-auto"
             />
           </div>

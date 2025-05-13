@@ -34,7 +34,7 @@ export async function listVoices(): Promise<VoiceResponse[]> {
 }
 
 export async function synthesizeSpeech(
-  request: TextToSpeechRequest
+  request: TextToSpeechRequest,
 ): Promise<ArrayBuffer> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/tts/synthesize`, {
@@ -60,7 +60,7 @@ export async function synthesizeSpeech(
 export async function transcribeAudio(
   audioData: Blob,
   language: string = "en",
-  format: string = "webm"
+  format: string = "webm",
 ): Promise<TranscriptionResponse> {
   try {
     // Make sure format is valid
@@ -80,7 +80,7 @@ export async function transcribeAudio(
     });
 
     console.log(
-      `Preparing file for transcription: ${fileName} with type: ${mimeType}`
+      `Preparing file for transcription: ${fileName} with type: ${mimeType}`,
     );
 
     const formData = new FormData();
@@ -108,7 +108,7 @@ export async function transcribeAudioBuffer(
   audioBuffer: ArrayBuffer,
   language: string = "en",
   translate: boolean = false,
-  format: string = "wav"
+  format: string = "wav",
 ): Promise<TranscriptionResponse> {
   try {
     const url = `${API_BASE_URL}/api/stt/transcribe/buffer?language=${language}&translate=${translate}&format=${format}`;

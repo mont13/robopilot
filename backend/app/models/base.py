@@ -48,8 +48,7 @@ class BaseSchema(BaseModel):
     __orm__ = None
     __transient_fields__ = ["id", "created_at", "updated_at"]
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
     id: Optional[int] = Field(default=None, read_only=True)
     created_at: Optional[datetime] = Field(default_factory=datetime.now)

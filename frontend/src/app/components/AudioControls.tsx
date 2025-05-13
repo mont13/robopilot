@@ -6,6 +6,7 @@ interface AudioControlsProps {
   isProcessing: boolean;
   onToggleRecording: () => void;
   disabled?: boolean;
+  isVadActive?: boolean;
 }
 
 const AudioControls: React.FC<AudioControlsProps> = ({
@@ -14,6 +15,7 @@ const AudioControls: React.FC<AudioControlsProps> = ({
   isProcessing,
   onToggleRecording,
   disabled = false,
+  isVadActive = false,
 }) => {
   return (
     <div className={`flex items-center space-x-2 ${className}`}>
@@ -23,22 +25,31 @@ const AudioControls: React.FC<AudioControlsProps> = ({
         className={`${
           isRecording
             ? "bg-red-500 hover:bg-red-600"
-            : "bg-blue-500 hover:bg-blue-600"
+            : isVadActive 
+              ? "bg-green-500 hover:bg-green-600 ring-2 ring-green-300 ring-opacity-75"
+              : "bg-blue-500 hover:bg-blue-600"
         } text-white rounded-full p-4 transition-colors ${
           disabled || isProcessing
             ? "opacity-50 cursor-not-allowed"
             : "cursor-pointer"
         }`}
-        title={isRecording ? "Stop Recording" : "Start Recording"}
+        title={isRecording ? "Stop Recording" : isVadActive ? "VAD Active - Waiting for Speech" : "Start Recording"}
       >
         {isProcessing ? (
           <LoadingIcon className="w-6 h-6 animate-spin" />
         ) : isRecording ? (
           <StopIcon className="w-6 h-6" />
+        ) : isVadActive ? (
+          <VadActiveIcon className="w-6 h-6" />
         ) : (
           <MicrophoneIcon className="w-6 h-6" />
         )}
       </button>
+      {isVadActive && !isProcessing && !isRecording && (
+        <span className="text-xs text-gray-600 animate-pulse">
+          Listening...
+        </span>
+      )}
     </div>
   );
 };
@@ -57,6 +68,29 @@ const MicrophoneIcon = ({ className = "w-6 h-6" }) => (
       strokeLinecap="round"
       strokeLinejoin="round"
       d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
+    />
+  </svg>
+);
+
+const VadActiveIcon = ({ className = "w-6 h-6" }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+    strokeWidth={1.5}
+    stroke="currentColor"
+    className={className}
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
+    />
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M8 9l4 4 4-4"
+      className="animate-pulse text-white"
     />
   </svg>
 );

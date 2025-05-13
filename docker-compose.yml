@@ -11,6 +11,8 @@ services:
       POSTGRES_DB_HOST: postgresql
       APP_RELOAD: "true"
       LMSTUDIO_HOST: "host.docker.internal:1234"
+      OPENAI_API_BASE: "http://host.docker.internal:1234/v1"
+      OPENAI_API_KEY: "NA"
     volumes:
       - ./backend/app:/home/appuser/app
       - ./backend/voices:/home/appuser/voices
@@ -42,9 +44,12 @@ services:
       POSTGRES_DB: fastapi_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - app-network
 
+  # Single-stage frontend service
   frontend:
     image: ${IMAGE_NAME:-frontend:latest}
     ports:
@@ -53,12 +58,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     environment:
-      REACT_APP_API_URL: http://server:8009
+      REACT_APP_API_URL: ${SERVER_URL:-http://server:8009}
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
-    volumes:
-      - ./frontend:/home/appuser/frontend
-      - /home/appuser/frontend/node_modules
+      NODE_ENV: production
     depends_on:
       - server
     networks:
@@ -67,3 +70,6 @@ services:
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  postgres_data:

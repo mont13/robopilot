@@ -3,16 +3,16 @@ LMStudio client utility for interacting with LM Studio API.
 """
 
 import asyncio
-from datetime import datetime
 import inspect
 import json
 import logging
 import uuid
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import lmstudio as lms
 from lmstudio._sdk_models import ModelInstanceInfo
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 # Import pydantic models and repository
 from app.repository.chat_session_repository import ChatSessionRepository
@@ -113,7 +113,7 @@ class LMStudioClient:
                 else:
                     # Last attempt failed, log warning and continue with existing client
                     try:
-                        existing_host = lms.get_default_client().host
+                        existing_host = lms.get_default_client().api_host
                         logger.warning(
                             f"Could not set LM Studio client host to {host}, using existing host: {existing_host}"
                         )
@@ -371,8 +371,17 @@ class LMStudioClient:
                     }
                 )
 
-            # Function to log tool calls
+            # Track tool calls for better response generation
+            tool_calls = []
+
+            # Function to log tool calls and collect them
             async def log_tool_call(name, args, result):
+                # Add to our tracking list
+                tool_calls.append(
+                    {"function_name": name, "arguments": args, "result": result}
+                )
+
+                # Log to database if needed
                 if self.current_session_id and self.current_message_id:
                     await self.chat_repository.log_function_call(
                         session_id=self.current_session_id,
@@ -410,22 +419,96 @@ class LMStudioClient:
                 wrapped_tool.__doc__ = tool.__doc__
                 wrapped_tools.append(wrapped_tool)
 
-            # Define the response schema for structured output
-            result = await asyncio.to_thread(
+            # Store the final content from the model.act() response
+            captured_content = []
+            final_answer = None
+
+            # Create a wrapper for the on_message callback to capture content
+            def message_callback(message):
+                nonlocal final_answer
+                if hasattr(message, "content") and message.content:
+                    # The content might be a list, a string, or another object
+                    if isinstance(message.content, list):
+                        for item in message.content:
+                            if isinstance(item, str):
+                                captured_content.append(item)
+                    elif isinstance(message.content, str):
+                        captured_content.append(message.content)
+                    else:
+                        # Try to get string representation
+                        try:
+                            content_str = str(message.content)
+                            captured_content.append(content_str)
+                        except Exception:
+                            pass
+
+                # Store this message as the final answer if it's not empty
+                if captured_content:
+                    final_answer = "".join(captured_content)
+
+                # Call the original callback if provided
+                if on_message:
+                    on_message(message)
+
+            # Run model.act() in a separate thread and capture the result
+            act_result = await asyncio.to_thread(
                 self.model.act,
                 chat,
-                tools,
-                on_message=on_message,
+                tools,  # Pass the original tools, not wrapped ones
+                on_message=message_callback,
                 on_prediction_fragment=on_prediction_fragment,
             )
+
+            # If we have captured content from the callback, use it directly
+            if final_answer:
+                final_content = final_answer
+            else:
+                # No final answer was captured - we need to generate a meaningful response
+                # based on the tool calls that were made
+
+                # If we have tool calls, format a response with the actual results
+                if tool_calls:
+                    tool_results = []
+                    for call in tool_calls:
+                        func_name = call["function_name"]
+                        args_str = ", ".join(
+                            [f"{k}={v}" for k, v in call["arguments"].items()]
+                        )
+                        result = call["result"]
+                        tool_results.append(f"Used {func_name}({args_str}) → {result}")
+
+                    # Create a response that shows what happened
+                    if hasattr(act_result, "rounds") and act_result.rounds > 0:
+                        rounds_info = f"({act_result.rounds} calculation steps)"
+                    else:
+                        rounds_info = ""
+
+                    final_content = (
+                        f"I calculated this for you {rounds_info}:\n\n"
+                        + "\n".join(tool_results)
+                    )
+
+                    # If the final tool result is simple, add it to the end as a summary
+                    if len(tool_calls) > 0:
+                        final_content += (
+                            f"\n\nThe answer is {tool_calls[-1]['result']}."
+                        )
+                else:
+                    # Fallback if no tool calls were recorded but we still have rounds
+                    if hasattr(act_result, "rounds") and act_result.rounds > 0:
+                        final_content = f"I processed your request in {act_result.rounds} steps, but I don't have a specific result to show."
+                    else:
+                        # Last resort fallback
+                        final_content = "I processed your request, but I don't have a specific result to show."
 
             # If session ID provided, save the assistant's response
             if session_id:
                 await self.chat_repository.add_message(
-                    session_id=session_id, role="assistant", content=result.content
+                    session_id=session_id, role="assistant", content=final_content
                 )
 
-            return result.content
+            logger.info(f"Final content: {final_content}")
+            return final_content
         except Exception as e:
             logger.error(f"Failed to process with tools: {str(e)}")
             raise RuntimeError(f"Failed to process with tools: {str(e)}")
@@ -702,7 +785,11 @@ class LMStudioClient:
                 processed_messages = self._process_messages_for_chat(db_messages)
 
                 chat_messages = [
-                    ChatMessage(role=msg.role, content=msg.content, created_at=msg.created_at.isoformat())
+                    ChatMessage(
+                        role=msg.role,
+                        content=msg.content,
+                        created_at=msg.created_at.isoformat(),
+                    )
                     for msg in processed_messages
                 ]
 
@@ -857,7 +944,12 @@ class LMStudioClient:
 
         # Convert to pydantic models
         chat_messages = [
-            ChatMessage(role=msg.role, content=msg.content, created_at=msg.created_at.isoformat()) for msg in messages
+            ChatMessage(
+                role=msg.role,
+                content=msg.content,
+                created_at=msg.created_at.isoformat(),
+            )
+            for msg in messages
         ]
 
         # Create and return session model
@@ -911,7 +1003,12 @@ class LMStudioClient:
 
         # Convert to pydantic models
         chat_messages = [
-            ChatMessage(role=msg.role, content=msg.content, created_at=msg.created_at.isoformat()) for msg in messages
+            ChatMessage(
+                role=msg.role,
+                content=msg.content,
+                created_at=msg.created_at.isoformat(),
+            )
+            for msg in messages
         ]
 
         # Create and return session model

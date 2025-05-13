@@ -1,8 +1,13 @@
 from __future__ import annotations
-import math
+
 import copy
+import math
 import socket
 import time
+
+import rtde_control  # type: ignore
+import rtde_io  # type: ignore
+import rtde_receive  # type: ignore
 
 
 def degree_to_rad(arr):
@@ -190,10 +195,6 @@ class Robot:
         print(f"🌐 Connecting to robot at {self.ip}...")
         # Example with rtde_control (requires installation: pip install rtde_control)
         try:
-            import rtde_control
-            import rtde_receive
-            import rtde_io
-
             self._connection_read = rtde_receive.RTDEReceiveInterface(self.ip)
             self._connection = rtde_control.RTDEControlInterface(self.ip)
             self._connection_io = rtde_io.RTDEIOInterface(self.ip)
@@ -302,8 +303,6 @@ class Robot:
             return None
         # Real implementation example (rtde_receive):
         try:
-            import rtde_receive
-
             rtde_r = rtde_receive.RTDEReceiveInterface(self.ip)
             actual_q = rtde_r.getActualQ()
             rtde_r.disconnect()
@@ -322,13 +321,11 @@ class Robot:
             return None
         # Real implementation example (rtde_receive):
         try:
-            import rtde_receive
-
             rtde_r = rtde_receive.RTDEReceiveInterface(self.ip)
             actual_tcp = rtde_r.getActualTCPPose()
             rtde_r.disconnect()
             return actual_tcp
-        except Exception as e:
+        except Exception:
             return None
 
     def set_teach_mode(self, freedrive=True):

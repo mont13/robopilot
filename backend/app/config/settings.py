@@ -1,8 +1,9 @@
 from enum import Enum
 from functools import lru_cache
-from typing import Any, Mapping
+from typing import Any, Optional
 
-from pydantic import BaseSettings, validator
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
 from uvicorn.config import LOG_LEVELS
 
 
@@ -19,8 +20,7 @@ class DatabaseSettings(BaseSettings):
     host: str = "localhost"
     port: int = 5432
 
-    class Config:
-        env_prefix = "POSTGRES_DB_"
+    model_config = {"env_prefix": "POSTGRES_DB_"}
 
     @property
     def url(self) -> str:
@@ -39,15 +39,14 @@ class Settings(BaseSettings):
     log_level: str = "debug"
     app_reload: bool = False
     db_retry_window_seconds: int = 60
-    otel_service_name: str = None
-    otel_exporter_otlp_endpoint: str = None
+    otel_service_name: Optional[str] = None
+    otel_exporter_otlp_endpoint: Optional[str] = None
 
     # LM Studio settings
-    lmstudio_host: str = "http://localhost:1234/v1"  # Default for Docker
-    lmstudio_default_model: str = None  # Use default model if None
+    lmstudio_host: str = "http://localhost:1234"
+    lmstudio_default_model: Optional[str] = None  # Use default model if None
 
-    class Config:
-        env_prefix = ""  # No prefix for environment variables
+    model_config = {"env_prefix": ""}  # No prefix for environment variables
 
     ALLOWED_CORS_ORIGINS: set = [
         "*",
@@ -60,16 +59,17 @@ class Settings(BaseSettings):
         else:
             return "dev"
 
-    @validator("log_level")
+    @field_validator("log_level")
     def valid_loglevel(cls, level: str) -> str:
         if level not in LOG_LEVELS.keys():
             raise ValueError(f"log_level must be one of {LOG_LEVELS.keys()}")
         return level
 
-    @validator("db_retry_window_seconds")
-    def init_db_retry_window_seconds(cls, v: int, values: Mapping[str, Any]) -> int:  # noqa
-        if values["environment"] == Environment.localdev:
+    @field_validator("db_retry_window_seconds")
+    def init_db_retry_window_seconds(cls, v: int, info: Any) -> int:  # noqa
+        if info.data["environment"] == Environment.localdev:
             return 1
+        return v
 
     @property
     def is_local_dev(self) -> bool:
