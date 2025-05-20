@@ -1,8 +1,8 @@
 import fastapi
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict, Optional # Dict is not explicitly used in models but good for general typing
+from pydantic import BaseModel, __version__ as pydantic_version
+from typing import List, Optional
 import uvicorn
 import threading
 import queue
@@ -10,11 +10,14 @@ import time
 import logging
 import socket
 import sys
+import os
+import cv2
+import numpy as np
+import json # For saving JSON data to file
 
 # DepthAI related imports
 import depthai as dai
-import blobconverter # For automatically downloading the model blob
-# numpy is implicitly used by frame.shape and getCvFrame()
+import blobconverter
 
 # Configure logging
 logging.basicConfig(
@@ -25,14 +28,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Configuration Constants ---
-# Model details (MobileNet-SSD trained on COCO)
-MODEL_ZOO_NAME = "mobilenet-ssd" # Pre-trained model available via blobconverter
-NN_CONFIDENCE_THRESHOLD = 0.5 # Minimum confidence to consider a detection
-NN_INPUT_SIZE = (300, 300) # MobileNet-SSD expects 300x300
+MODEL_ZOO_NAME = "mobilenet-ssd"
+NN_CONFIDENCE_THRESHOLD = 0.5
+NN_INPUT_SIZE = (300, 300) # The frame from nn.passthrough will be this size
 CAMERA_FPS = 30
+SAVE_PATH = "detection_outputs"
 
-# COCO Labels (MobileNet-SSD is often trained on COCO)
-# The first label is often "background" or "unknown"
 COCO_LABEL_MAP = [
     "background", "person", "bicycle", "car", "motorcycle", "airplane",
     "bus", "train", "truck", "boat", "traffic light", "fire hydrant",
@@ -50,9 +51,9 @@ COCO_LABEL_MAP = [
 ]
 
 # Global variables
-detection_queue = queue.Queue(maxsize=1) # Holds the latest detection result
-is_running = False # Flag to control the camera worker thread
-camera_thread = None # Reference to the camera worker thread
+detection_queue = queue.Queue(maxsize=1)
+is_running = False
+camera_thread = None
 
 # --- Pydantic Data Models ---
 class BoundingBox(BaseModel):
@@ -66,19 +67,20 @@ class Detection(BaseModel):
     confidence: float
     bbox: BoundingBox
 
+class Resolution(BaseModel): # NEW: Model for resolution
+    width: int
+    height: int
+
 class DetectionResponse(BaseModel):
     detections: List[Detection]
     timestamp: float
+    resolution: Resolution # ADDED: Resolution field
+    annotated_image_saved_path: Optional[str] = None
+    original_image_saved_path: Optional[str] = None
+    json_saved_path: Optional[str] = None
 
-# --- Detection Processing Function ---
+# --- Helper Functions ---
 def process_raw_detections(frame, raw_detections):
-    """
-    Converts raw DepthAI detections into a list of Pydantic Detection models.
-    Each dictionary contains:
-    - label: detected object class
-    - confidence: detection confidence score
-    - bbox: dictionary with xmin, ymin, xmax, ymax coordinates
-    """
     if frame is None or not raw_detections:
         return []
     
@@ -87,7 +89,6 @@ def process_raw_detections(frame, raw_detections):
     
     processed_results = []
     for detection_data in raw_detections:
-        # Convert normalized coordinates to pixel coordinates
         xmin = int(detection_data.xmin * frame_width)
         ymin = int(detection_data.ymin * frame_height)
         xmax = int(detection_data.xmax * frame_width)
@@ -105,66 +106,70 @@ def process_raw_detections(frame, raw_detections):
         )
     return processed_results
 
+def draw_detections_on_frame(frame: np.ndarray, detections_list: List[Detection]) -> np.ndarray:
+    display_frame = frame.copy()
+    for det in detections_list:
+        bbox = det.bbox
+        cv2.rectangle(display_frame, (bbox.xmin, bbox.ymin), 
+                      (bbox.xmax, bbox.ymax), (0, 255, 0), 2)
+        
+        label_text = f"{det.label} {det.confidence:.2f}"
+        label_y = bbox.ymin - 15 if bbox.ymin - 15 > 15 else bbox.ymin + 25
+        cv2.putText(display_frame, label_text, 
+                   (bbox.xmin, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    return display_frame
+
+def get_pydantic_model_dict(model_instance: BaseModel):
+    if pydantic_version.startswith("1."):
+        return model_instance.dict()
+    else: 
+        return model_instance.model_dump()
+
 # --- DepthAI Pipeline Creation ---
 def create_depthai_pipeline():
-    """Creates and configures the DepthAI pipeline."""
     logger.info("Creating DepthAI pipeline...")
-    pipeline = dai.Pipeline()
+    pipeline_obj = dai.Pipeline()
 
-    # 1. Color Camera Node
-    cam_rgb = pipeline.create(dai.node.ColorCamera)
+    cam_rgb = pipeline_obj.create(dai.node.ColorCamera)
     cam_rgb.setPreviewSize(NN_INPUT_SIZE[0], NN_INPUT_SIZE[1])
     cam_rgb.setInterleaved(False)
     cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
     cam_rgb.setFps(CAMERA_FPS)
 
-    # 2. Neural Network Node (MobileNetDetectionNetwork)
-    nn = pipeline.create(dai.node.MobileNetDetectionNetwork)
+    nn = pipeline_obj.create(dai.node.MobileNetDetectionNetwork)
     try:
-        # Download blob if not already downloaded
-        blob_path = blobconverter.from_zoo(
-            name=MODEL_ZOO_NAME, 
-            shaves=6, 
-            zoo_type="intel"
-        )
+        blob_path = blobconverter.from_zoo(name=MODEL_ZOO_NAME, shaves=6, zoo_type="intel")
         nn.setBlobPath(blob_path)
     except Exception as e:
         logger.error(f"Failed to get blob for {MODEL_ZOO_NAME} from zoo: {e}", exc_info=True)
-        raise # Critical failure, pipeline cannot be created
+        raise 
         
     nn.setConfidenceThreshold(NN_CONFIDENCE_THRESHOLD)
     nn.setNumInferenceThreads(2) 
     nn.input.setBlocking(False)
-
-    # Link camera preview output to neural network input
     cam_rgb.preview.link(nn.input)
 
-    # 3. XLinkOut for RGB frames (passthrough from NN for synchronization)
-    xout_rgb = pipeline.create(dai.node.XLinkOut)
+    xout_rgb = pipeline_obj.create(dai.node.XLinkOut)
     xout_rgb.setStreamName("rgb")
-    nn.passthrough.link(xout_rgb.input)
+    nn.passthrough.link(xout_rgb.input) # Frame from here will be NN_INPUT_SIZE
 
-    # 4. XLinkOut for NN detections
-    xout_nn = pipeline.create(dai.node.XLinkOut)
+    xout_nn = pipeline_obj.create(dai.node.XLinkOut)
     xout_nn.setStreamName("nn")
     nn.out.link(xout_nn.input)
     
     logger.info("DepthAI pipeline created successfully.")
-    return pipeline
+    return pipeline_obj
 
-# Global pipeline instance, created once
-# This is just the pipeline definition, not the active device connection yet.
 try:
     pipeline = create_depthai_pipeline()
 except Exception as e:
     logger.error(f"Fatal error creating DepthAI pipeline during initial setup: {e}. The API's camera features will be unavailable.")
-    pipeline = None # Indicate pipeline creation failure
+    pipeline = None
 
 # --- FastAPI Application ---
 app = FastAPI(title="Object Detection API",
-             description="API for real-time object detection using OAK-D camera")
+             description="API for real-time object detection. Saves original/annotated images and JSON data on detection.")
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -175,23 +180,19 @@ app.add_middleware(
 
 # --- Camera Worker Thread ---
 def camera_worker():
-    """Thread that runs the camera detection loop."""
     global is_running, detection_queue, pipeline
 
     if pipeline is None:
-        logger.error("Camera worker cannot start: DepthAI pipeline is not available (failed during creation).")
-        # Put an error in the queue to indicate persistent failure
+        logger.error("Camera worker: DepthAI pipeline not available.")
         try:
             detection_queue.put_nowait({'error': 'DepthAI pipeline initialization failed. Camera inactive.'})
-        except queue.Full: # Should not happen with maxsize=1 unless something else is writing
-            pass
-        is_running = False # Ensure main loop condition is false
+        except queue.Full: pass
+        is_running = False
         return
 
     try:
         with dai.Device(pipeline) as device:
-            logger.info(f"Successfully connected to OAK device: {device.getDeviceInfo().name}")
-            logger.info(f"USB speed: {device.getUsbSpeed().name}")
+            logger.info(f"Connected to OAK device: {device.getDeviceInfo().name} (USB: {device.getUsbSpeed().name})")
             
             q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
             q_nn = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
@@ -210,26 +211,36 @@ def camera_worker():
                     current_raw_detections = in_nn.detections
 
                 if current_frame is not None:
+                    # Get frame dimensions for resolution
+                    frame_height, frame_width, _ = current_frame.shape
+                    current_frame_resolution = Resolution(width=frame_width, height=frame_height)
+                    
                     detection_models = process_raw_detections(current_frame, current_raw_detections)
                     
-                    payload = DetectionResponse(
+                    response_payload = DetectionResponse(
                         detections=detection_models,
-                        timestamp=time.time()
+                        timestamp=time.time(),
+                        resolution=current_frame_resolution # Include resolution
                     )
                     
+                    queue_item = {
+                        'response_data': response_payload,
+                        'frame': current_frame.copy() 
+                    }
+                    
                     try:
-                        detection_queue.put_nowait(payload)
+                        detection_queue.put_nowait(queue_item)
                     except queue.Full:
                         try:
-                            detection_queue.get_nowait() # Discard oldest
+                            detection_queue.get_nowait() 
                         except queue.Empty:
-                            pass # Should ideally not happen if Full was raised
-                        detection_queue.put_nowait(payload) # Add newest
+                            pass 
+                        detection_queue.put_nowait(queue_item)
                 
-                time.sleep(0.01) # Small delay to yield CPU
+                time.sleep(0.01) 
     
     except RuntimeError as e:
-        error_msg = f"OAK Camera Runtime Error (often indicates device issue or already in use): {str(e)}"
+        error_msg = f"OAK Camera Runtime Error: {str(e)}"
         logger.error(error_msg, exc_info=True)
         try:
             detection_queue.put_nowait({'error': error_msg})
@@ -242,16 +253,20 @@ def camera_worker():
         except queue.Full: pass
     finally:
         logger.info("Camera worker thread has finished.")
-        # is_running will be set to False by shutdown_event for graceful stop
-        # If thread exits due to error, health check (is_alive) will reflect it.
 
 # --- FastAPI Event Handlers ---
 @app.on_event("startup")
 async def startup_event():
-    """Start the camera thread when the API starts."""
     global camera_thread, is_running
+    if not os.path.exists(SAVE_PATH):
+        try:
+            os.makedirs(SAVE_PATH)
+            logger.info(f"Created output save directory: {SAVE_PATH}")
+        except OSError as e:
+            logger.error(f"Could not create output save directory {SAVE_PATH}: {e}")
+
     if pipeline is None:
-        logger.warning("Skipping camera thread start: DepthAI pipeline initialization failed earlier.")
+        logger.warning("Skipping camera thread start: DepthAI pipeline failed.")
         return
 
     is_running = True
@@ -259,106 +274,150 @@ async def startup_event():
     camera_thread.start()
     logger.info("Camera worker thread initiated.")
 
+
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Stop the camera thread when the API shuts down."""
     global is_running
-    logger.info("API shutdown initiated. Attempting to stop camera thread...")
+    logger.info("API shutdown. Stopping camera thread...")
     is_running = False 
     if camera_thread and camera_thread.is_alive():
         camera_thread.join(timeout=2.0) 
         if camera_thread.is_alive():
-            logger.warning("Camera thread did not stop within the timeout.")
+            logger.warning("Camera thread did not stop within timeout.")
         else:
-            logger.info("Camera thread stopped successfully.")
+            logger.info("Camera thread stopped.")
     else:
         logger.info("Camera thread was not running or already stopped.")
 
 # --- API Endpoints ---
 @app.get("/detections", response_model=DetectionResponse)
 async def get_latest_detections():
-    """Get the latest detection results from the OAK-D camera."""
-    # First, check if there's a persistent error in the queue if camera isn't live
-    # This helps to immediately inform the client if the camera system is down.
     if not (camera_thread and camera_thread.is_alive()):
-        try:
-            # Try to peek at the queue without blocking or removing
-            # This is a bit of a hack as Queue doesn't have a direct peek.
-            # If queue is empty, this will raise queue.Empty.
-            # If not empty, it might be an error or old data.
-            if not detection_queue.empty():
+        if not detection_queue.empty():
+            try:
                 potential_error_item = detection_queue.queue[0]
                 if isinstance(potential_error_item, dict) and 'error' in potential_error_item:
-                    raise HTTPException(status_code=503, detail=f"Service Unavailable: Camera not running. Last error: {potential_error_item['error']}")
-            # If no error in queue but camera not running, still unavailable
-            raise HTTPException(status_code=503, detail="Service Unavailable: Camera system is not active.")
-        except queue.Empty:
-             raise HTTPException(status_code=503, detail="Service Unavailable: Camera system is not active and no detections queued.")
-        except AttributeError: # If detection_queue.queue is not accessible (e.g. other queue type)
-            raise HTTPException(status_code=503, detail="Service Unavailable: Camera system is not active.")
-
+                    raise HTTPException(status_code=503, detail=f"Service Unavailable: Camera not running. Error: {potential_error_item['error']}")
+            except Exception: pass
+        raise HTTPException(status_code=503, detail="Service Unavailable: Camera system is not active.")
 
     try:
-        # Get the latest item. This item should be a DetectionResponse model instance
-        # or an error dict if the worker put one there before exiting.
-        result_item = detection_queue.get_nowait() 
-        if isinstance(result_item, dict) and 'error' in result_item: 
-            # This case should ideally be caught by the check above if camera_thread is not alive.
-            # But if thread died and put an error, then restarted, this could happen.
-            raise HTTPException(status_code=503, detail=f"Service Error: An error was reported by the camera worker: {result_item['error']}")
+        queued_item = detection_queue.get_nowait()
         
-        # Assuming result_item is a DetectionResponse Pydantic model if no error
-        # FastAPI will validate this against response_model=DetectionResponse
-        return result_item
+        if isinstance(queued_item, dict) and 'error' in queued_item: 
+            raise HTTPException(status_code=503, detail=f"Service Error: {queued_item['error']}")
+        
+        if not (isinstance(queued_item, dict) and 'response_data' in queued_item and 'frame' in queued_item):
+            logger.error(f"Invalid item format in detection_queue: {type(queued_item)}")
+            raise HTTPException(status_code=500, detail="Internal server error: Unexpected data format from camera.")
+
+        response_payload: DetectionResponse = queued_item['response_data']
+        original_frame: Optional[np.ndarray] = queued_item['frame']
+        
+        saved_original_path = None
+        saved_annotated_path = None
+        saved_json_path = None
+
+        if not os.path.exists(SAVE_PATH):
+            try:
+                os.makedirs(SAVE_PATH, exist_ok=True)
+            except OSError as e:
+                logger.error(f"Could not create output save directory {SAVE_PATH} on demand: {e}")
+
+        ts_int = int(response_payload.timestamp)
+        ts_ms = int((response_payload.timestamp % 1) * 1000)
+        filename_base = f"{ts_int}_{ts_ms:03d}"
+
+        if original_frame is not None and os.path.exists(SAVE_PATH):
+            try:
+                original_filename = f"original_{filename_base}.jpg"
+                full_original_save_path = os.path.join(SAVE_PATH, original_filename)
+                cv2.imwrite(full_original_save_path, original_frame)
+                saved_original_path = full_original_save_path
+                logger.info(f"Saved original image to: {full_original_save_path}")
+
+                if response_payload.detections:
+                    annotated_frame = draw_detections_on_frame(original_frame, response_payload.detections)
+                    annotated_filename = f"annotated_{filename_base}.jpg"
+                    full_annotated_save_path = os.path.join(SAVE_PATH, annotated_filename)
+                    cv2.imwrite(full_annotated_save_path, annotated_frame)
+                    saved_annotated_path = full_annotated_save_path
+                    logger.info(f"Saved annotated image to: {full_annotated_save_path}")
+                else:
+                    logger.info("No detections found, no annotated image saved for this request.")
+            except Exception as e:
+                logger.error(f"Failed to save detection image(s): {e}", exc_info=True)
+        
+        response_payload.original_image_saved_path = saved_original_path
+        response_payload.annotated_image_saved_path = saved_annotated_path
+
+        if os.path.exists(SAVE_PATH):
+            try:
+                json_filename = f"data_{filename_base}.json"
+                full_json_save_path = os.path.join(SAVE_PATH, json_filename)
+                # Update the payload *before* saving, so the saved JSON also contains this path.
+                response_payload.json_saved_path = full_json_save_path 
+
+                payload_dict = get_pydantic_model_dict(response_payload)
+                
+                with open(full_json_save_path, 'w') as f:
+                    json.dump(payload_dict, f, indent=4)
+                logger.info(f"Saved detection JSON data to: {full_json_save_path}")
+            except Exception as e:
+                logger.error(f"Failed to save detection JSON data: {e}", exc_info=True)
+                response_payload.json_saved_path = None 
+        
+        return response_payload
+
     except queue.Empty:
-        # Camera is running, but no new detection results are in the queue at this exact moment.
-        raise HTTPException(status_code=204, detail="No new detection results available at this moment. Try again shortly.")
+        raise HTTPException(status_code=204, detail="No new detection results available. Try again shortly.")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error in /detections endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error while fetching detections.")
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for the API and camera status."""
     camera_pipeline_ok = pipeline is not None
     camera_thread_ok = camera_thread is not None and camera_thread.is_alive()
     
     status_detail = "unknown"
-    if not camera_pipeline_ok:
-        status_detail = "pipeline_initialization_failed"
-    elif camera_thread_ok:
-        status_detail = "running"
-    elif camera_thread is None: # Pipeline OK, but thread not even started (e.g. startup event failed)
-        status_detail = "thread_not_started"
-    else: # Pipeline OK, thread started but not alive
-        status_detail = "thread_stopped_or_crashed"
+    if not camera_pipeline_ok: status_detail = "pipeline_initialization_failed"
+    elif camera_thread_ok: status_detail = "running"
+    elif camera_thread is None: status_detail = "thread_not_started"
+    else: status_detail = "thread_stopped_or_crashed"
 
     last_error_hint = "N/A"
     if not camera_thread_ok and not detection_queue.empty():
         try:
-            # Peek at the last item if possible to show error context
             item = detection_queue.queue[0] 
-            if isinstance(item, dict) and 'error' in item:
-                last_error_hint = item['error']
-        except Exception:
-            pass # Ignore if peeking fails
+            if isinstance(item, dict) and 'error' in item: last_error_hint = item['error']
+        except Exception: pass
+    
+    # The frame resolution passed to the API will be NN_INPUT_SIZE
+    # because cam_rgb.preview is linked to nn.input, and nn.passthrough is used.
+    expected_output_resolution = {"width": NN_INPUT_SIZE[0], "height": NN_INPUT_SIZE[1]}
+
 
     return {
         "status": "healthy" if camera_pipeline_ok and camera_thread_ok else "degraded",
         "timestamp": time.time(),
         "service_name": app.title,
+        "pydantic_version": pydantic_version,
         "camera_pipeline_initialized": camera_pipeline_ok,
         "camera_thread_active": camera_thread_ok,
         "camera_status_details": status_detail,
         "last_camera_error_hint": last_error_hint,
         "detection_queue_current_size": detection_queue.qsize(),
+        "expected_output_resolution": expected_output_resolution,
+        "save_path_exists": os.path.exists(SAVE_PATH),
         "hostname": socket.gethostname(),
         "ip_address": socket.gethostbyname(socket.gethostname()) if hasattr(socket, 'gethostbyname') else "N/A"
     }
 
 @app.get("/test")
 async def test_endpoint():
-    """Simple test endpoint that doesn't require camera."""
     return {
         "message": "API is working!",
         "timestamp": time.time(),
@@ -369,26 +428,28 @@ async def test_endpoint():
 # --- Main Execution ---
 if __name__ == "__main__":
     logger.info("Starting Object Detection API server...")
-    
+    logger.info(f"Using Pydantic version: {pydantic_version}")
+
     try:
         hostname = socket.gethostname()
         local_ip = socket.gethostbyname(hostname)
-        logger.info(f"Server will be available on all interfaces (0.0.0.0:8000).")
-        logger.info(f"Try accessing on this machine via: http://localhost:8000 or http://{local_ip}:8000")
+        logger.info(f"Server on all interfaces (0.0.0.0:8000). Access via: http://localhost:8000 or http://{local_ip}:8000")
     except socket.gaierror:
-        logger.warning("Could not determine local IP address. Server will run on 0.0.0.0:8000.")
-        local_ip = "localhost" # Fallback for log messages
+        logger.warning("Could not determine local IP. Server will run on 0.0.0.0:8000.")
+        local_ip = "localhost"
     
-    logger.info("Available Endpoints:")
-    logger.info(f"  API Docs (Swagger UI): http://{local_ip}:8000/docs")
-    logger.info(f"  Detections:            http://{local_ip}:8000/detections")
-    logger.info(f"  Health Check:          http://{local_ip}:8000/health")
-    logger.info(f"  Test Endpoint:         http://{local_ip}:8000/test")
-    logger.info("Press Ctrl+C to stop the server.")
+    logger.info("Endpoints:")
+    logger.info(f"  Docs:       http://{local_ip}:8000/docs")
+    logger.info(f"  Detections: http://{local_ip}:8000/detections")
+    logger.info(f"  Health:     http://{local_ip}:8000/health")
+    logger.info(f"  Test:       http://{local_ip}:8000/test")
+    logger.info(f"Output (images, JSON) will be saved to: ./{SAVE_PATH}/")
+    logger.info("Press Ctrl+C to stop.")
     
     uvicorn.run(
-        "api:app", 
+        "__main__:app", # Changed from "api:app" as per user's original code if run directly
         host="0.0.0.0",
         port=8000,
-        log_level="info" 
+        log_level="info",
+        reload=False 
     )
