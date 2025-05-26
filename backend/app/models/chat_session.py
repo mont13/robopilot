@@ -8,7 +8,7 @@ from typing import List
 from sqlalchemy import Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, relationship
 
-from app.models.base import BaseOrm, BaseSchema
+from app.models.base import BaseOrm
 
 
 class ChatSession(BaseOrm):

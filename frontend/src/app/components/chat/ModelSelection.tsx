@@ -1,32 +1,32 @@
-import { ModelInfo } from "@/app/api/lmstudio";
+import { LLMConnectionResponse } from "@/app/api/connections";
 import React from "react";
 
 interface ModelSelectionProps {
-  models: ModelInfo[];
-  loadedModel: ModelInfo | null;
-  onSelectModel: (modelKey: string) => void;
+  connections: LLMConnectionResponse[];
+  activeConnection: LLMConnectionResponse | null;
+  onSelectConnection: (connectionId: string) => void;
   isLoading: boolean;
 }
 
 const ModelSelection: React.FC<ModelSelectionProps> = ({
-  models,
-  loadedModel,
-  onSelectModel,
+  connections,
+  activeConnection,
+  onSelectConnection,
   isLoading,
 }) => {
   return (
     <select
       className="w-full p-2 rounded border bg-white dark:bg-gray-800 dark:border-gray-700"
-      value={loadedModel?.name || ""}
-      onChange={(e) => onSelectModel(e.target.value)}
+      value={activeConnection?.id || ""}
+      onChange={(e) => onSelectConnection(e.target.value)}
       disabled={isLoading}
     >
       <option value="" disabled>
-        Select a model
+        Select a connection
       </option>
-      {models.map((model) => (
-        <option key={model.name} value={model.name}>
-          {model.name}
+      {connections.map((connection) => (
+        <option key={connection.id} value={connection.id}>
+          {connection.name} ({connection.provider} / {connection.model_name})
         </option>
       ))}
     </select>

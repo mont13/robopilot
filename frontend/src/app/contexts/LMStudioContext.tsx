@@ -1,36 +1,40 @@
 "use client";
 
 import {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-  ReactNode,
-} from "react";
-import { v4 as uuidv4 } from "uuid";
+  LLMConnectionResponse,
+  activateConnection,
+  checkServerHealth,
+  getActiveConnection,
+  listConnections,
+} from "@/app/api/connections";
 import {
-  checkHealth,
-  listModels,
-  listChatSessions,
-  getActiveSession,
-  createChatSession,
-  getChatSession,
-  deleteChatSession,
-  sendMessage,
   ChatSession,
-  ModelInfo,
+  createChatSession,
+  deleteChatSession,
+  getActiveSession,
+  getChatSession,
+  listChatSessions,
+  sendMessage,
 } from "@/app/api/lmstudio";
 import { useEvent } from "@/app/contexts/EventContext";
 import { SessionStatus } from "@/app/types";
 import { getObjectCookie, setObjectCookie } from "@/app/utils/cookies";
+import {
+  ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { v4 as uuidv4 } from "uuid";
 
 interface LMStudioContextProps {
   sessionStatus: SessionStatus;
   currentSession: ChatSession | null;
   chatSessions: ChatSession[];
-  models: ModelInfo[];
-  loadedModel: ModelInfo | null;
+  connections: LLMConnectionResponse[];
+  activeConnection: LLMConnectionResponse | null;
   messages: {
     role: string;
     content: string;
@@ -43,6 +47,7 @@ interface LMStudioContextProps {
   loadChatSession: (sessionId: string) => Promise<ChatSession | null>;
   createNewChatSession: (name?: string) => Promise<ChatSession | null>;
   refreshSessions: () => Promise<void>;
+  activateConnectionById: (connectionId: string) => Promise<boolean>;
 }
 
 const LMStudioContext = createContext<LMStudioContextProps | undefined>(
@@ -56,8 +61,9 @@ export function LMStudioProvider({ children }: { children: ReactNode }) {
     null,
   );
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [loadedModel] = useState<ModelInfo | null>(null);
+  const [connections, setConnections] = useState<LLMConnectionResponse[]>([]);
+  const [activeConnection, setActiveConnection] =
+    useState<LLMConnectionResponse | null>(null);
   const [messages, setMessages] = useState<{ role: string; content: string }[]>(
     [],
   );
@@ -67,7 +73,7 @@ export function LMStudioProvider({ children }: { children: ReactNode }) {
   // Function to check connection status
   const checkConnection = useCallback(async () => {
     try {
-      const isConnected = await checkHealth();
+      const isConnected = await checkServerHealth();
       return isConnected;
     } catch {
       return false;
@@ -85,9 +91,15 @@ export function LMStudioProvider({ children }: { children: ReactNode }) {
         throw new Error("Failed to connect to LM Studio API");
       }
 
-      // Get available models
-      const modelsList = await listModels();
-      setModels(modelsList);
+      // Get available connections
+      const connectionsList = await listConnections();
+      setConnections(connectionsList);
+
+      // Get active connection if any
+      const active = await getActiveConnection();
+      if (active) {
+        setActiveConnection(active);
+      }
 
       // Get chat sessions
       const sessions = await listChatSessions();
@@ -103,9 +115,10 @@ export function LMStudioProvider({ children }: { children: ReactNode }) {
       setSessionStatus("CONNECTED");
       logClientEvent({
         type: "connection_success",
-        modelsCount: modelsList.length,
+        connectionsCount: connectionsList.length,
         sessionsCount: sessions.length,
         hasActiveSession: !!activeSession,
+        hasActiveConnection: !!active,
       });
 
       return true;
@@ -127,6 +140,46 @@ export function LMStudioProvider({ children }: { children: ReactNode }) {
     setMessages([]);
     logClientEvent({ type: "disconnect" });
   }, [logClientEvent]);
+
+  // Activate a connection
+  const activateConnectionById = useCallback(
+    async (connectionId: string) => {
+      if (sessionStatus !== "CONNECTED") {
+        return false;
+      }
+
+      try {
+        const result = await activateConnection(connectionId);
+
+        if (result) {
+          // Update active connection
+          const active = await getActiveConnection();
+          if (active) {
+            setActiveConnection(active);
+          }
+
+          logClientEvent({
+            type: "connection_activated",
+            connectionId: connectionId,
+            connectionName: result.name,
+            provider: result.provider,
+          });
+
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error(`Error activating connection ${connectionId}:`, error);
+        logClientEvent({
+          type: "connection_activation_error",
+          connectionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    },
+    [sessionStatus, logClientEvent],
+  );
 
   // Create a new chat session
   const createNewChatSession = useCallback(
@@ -415,8 +468,8 @@ export function LMStudioProvider({ children }: { children: ReactNode }) {
         sessionStatus,
         currentSession,
         chatSessions,
-        models,
-        loadedModel,
+        connections,
+        activeConnection,
         messages,
         connect,
         disconnect,
@@ -425,6 +478,7 @@ export function LMStudioProvider({ children }: { children: ReactNode }) {
         loadChatSession,
         createNewChatSession,
         refreshSessions,
+        activateConnectionById,
       }}
     >
       {children}

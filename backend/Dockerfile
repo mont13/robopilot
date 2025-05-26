@@ -94,6 +94,8 @@ RUN git clone https://gitlab.com/sdurobotics/ur_rtde.git
 WORKDIR /opt/ur_rtde
 # Initialize pybind11 submodule for Python bindings
 RUN git submodule update --init --recursive
+# Fix typo in rtde_python_bindings.cpp
+RUN sed -i 's/FLAG_DIABLE_REMOTE_CONTROL_CHECK/FLAG_DISABLE_REMOTE_CONTROL_CHECK/g' src/rtde_python_bindings.cpp
 RUN mkdir build && cd build && \
     cmake .. -DPYTHON_BINDINGS=ON -DBUILD_PYTHON_MODULE=ON && \
     make -j4 && \

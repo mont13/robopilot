@@ -10,14 +10,10 @@ services:
     environment:
       POSTGRES_DB_HOST: postgresql
       APP_RELOAD: "true"
-      LMSTUDIO_HOST: "host.docker.internal:1234"
-      OPENAI_API_BASE: "http://host.docker.internal:1234/v1"
-      OPENAI_API_KEY: "NA"
     volumes:
       - ./backend/app:/home/appuser/app
       - ./backend/voices:/home/appuser/voices
       - ./backend/scripts:/home/appuser/scripts
-      - ./records:/home/appuser/records
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

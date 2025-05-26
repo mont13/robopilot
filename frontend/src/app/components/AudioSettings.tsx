@@ -1,9 +1,9 @@
-import { listModels } from "@/app/api/lmstudio";
+import { listConnections } from "@/app/api/connections";
 import { listVoices, VoiceResponse } from "@/app/api/voice";
 import { useAudio } from "@/app/contexts/AudioContext";
 import { useLMStudio } from "@/app/contexts/LMStudioContext";
 import React, { useEffect, useState } from "react";
-import ModelSelection from "./chat/ModelSelection";
+// No need to import ConnectionSelection as we're using a plain select
 
 interface AudioSettingsProps {
   onClose: () => void;
@@ -25,7 +25,9 @@ const AudioSettings: React.FC<AudioSettingsProps> = ({
     setSpeakerId,
     setTranscriptionLanguage,
   } = useAudio();
-  const { models, loadedModel } = useLMStudio();
+  const { connections, activeConnection, activateConnectionById } = useLMStudio();
+  
+  // We don't need this since we're using a simple select now
 
   useEffect(() => {
     if (isVisible) {
@@ -36,9 +38,9 @@ const AudioSettings: React.FC<AudioSettingsProps> = ({
   const loadVoices = async () => {
     setIsLoading(true);
     try {
-      const [voicesList, modelsList] = await Promise.all([
+      const [voicesList, connectionsList] = await Promise.all([
         listVoices(),
-        listModels(),
+        listConnections(),
       ]);
       setVoices(voicesList);
 
@@ -48,9 +50,10 @@ const AudioSettings: React.FC<AudioSettingsProps> = ({
         setTranscriptionLanguage("en"); // Default language
       }
 
-      // If no model is loaded yet but we have models, select the first one
-      if (!loadedModel && modelsList.length > 0) {
-        setSelectedVoice(modelsList[0].id);
+      // If no connection is active yet but we have connections, add a note in the console
+      if (!activeConnection && connectionsList.length > 0) {
+        // We don't auto-activate - user must explicitly select
+        console.log("No active connection. Please select a connection from the dropdown.");
       }
     } catch (error) {
       console.error("Error loading voices:", error);
@@ -68,26 +71,90 @@ const AudioSettings: React.FC<AudioSettingsProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-        <div className="px-4 sm:px-6 py-4 border-b">
-          <h3 className="text-lg font-medium">Audio Settings</h3>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b dark:border-gray-700">
+          <h3 className="text-lg font-medium text-gray-800 dark:text-white">
+            Audio Settings
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
+            aria-label="Close"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path
+                fillRule="evenodd"
+                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
         </div>
 
-        <div className="p-4 sm:p-6">
+        <div className="p-4 sm:p-6 dark:text-gray-200">
           <div className="mb-6">
-            <h4 className="text-lg font-semibold mb-2">Model Settings</h4>
+            <h4 className="text-lg font-semibold mb-2 text-gray-800 dark:text-white">
+              Model Settings
+            </h4>
             <div className="space-y-4">
               <div>
-                <h5 className="text-md font-medium mb-1">Chat Model</h5>
-                <ModelSelection
-                  models={models}
-                  loadedModel={loadedModel}
-                  onSelectModel={(modelKey) => setSelectedVoice(modelKey)}
-                  isLoading={isLoading}
-                />
+                <h5 className="text-md font-medium mb-1 text-gray-700 dark:text-gray-300">
+                  LLM Connection {!connections.length && "(None Available)"}
+                </h5>
+                <select
+                  className="w-full p-2 rounded border bg-white dark:bg-gray-800 dark:border-gray-700"
+                  value={activeConnection?.id || ""}
+                  onChange={(e) => activateConnectionById(e.target.value)}
+                  disabled={isLoading || connections.length === 0}
+                >
+                  <option value="" disabled>
+                    Select a connection
+                  </option>
+                  {(() => {
+                    // Group connections by provider
+                    const groupedConnections = connections.reduce((acc, connection) => {
+                      const provider = connection.provider;
+                      if (!acc[provider]) {
+                        acc[provider] = [];
+                      }
+                      acc[provider].push(connection);
+                      return acc;
+                    }, {} as Record<string, typeof connections>);
+                    
+                    // Get providers in alphabetical order
+                    const providers = Object.keys(groupedConnections).sort();
+                    
+                    // If no connections, show message
+                    if (providers.length === 0) {
+                      return (
+                        <option value="" disabled>
+                          No connections available
+                        </option>
+                      );
+                    }
+                    
+                    return providers.map(provider => (
+                      <optgroup key={provider} label={provider.toUpperCase()}>
+                        {groupedConnections[provider].map(connection => (
+                          <option key={connection.id} value={connection.id}>
+                            {connection.name} ({connection.model_name})
+                            {connection.is_active ? " • Active" : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ));
+                  })()}
+                </select>
               </div>
               <div>
-                <h5 className="text-md font-medium mb-1">Audio Voice</h5>
+                <h5 className="text-md font-medium mb-1 text-gray-700 dark:text-gray-300">
+                  Audio Voice
+                </h5>
                 <select
                   className="w-full p-2 rounded border bg-white dark:bg-gray-800 dark:border-gray-700"
                   value={selectedVoice || ""}

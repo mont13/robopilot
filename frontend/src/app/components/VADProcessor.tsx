@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from "react";
+import React, { useEffect, useCallback, useRef } from "react";
 import { useMicVAD, utils } from "@ricky0123/vad-react";
 import { useAudio } from "@/app/contexts/AudioContext";
 import { v4 as uuidv4 } from "uuid";
@@ -81,28 +81,58 @@ const VADProcessor: React.FC<VADProcessorProps> = ({
     ],
   );
 
+  // Track the last processing time to start listening after a message
+  const lastMessageTimeRef = useRef<number>(0);
+  
+  // Speech detection handler
+  const handleSpeechStart = useCallback(() => {
+    // If TTS is playing when speech is detected, stop it to allow interrupting
+    if (ttsPlayingMessageId) {
+      stopTextToSpeech();
+      logClientEvent({
+        type: "tts_interrupted_by_speech",
+      });
+    }
+  }, [ttsPlayingMessageId, stopTextToSpeech, logClientEvent]);
+  
   // Configure the VAD hook
   const vad = useMicVAD({
     // Only start if enabled and not currently processing or playing
     startOnLoad: false,
     model: "v5",
     // Higher speech threshold for less false positives
-    positiveSpeechThreshold: 0.45,
+    positiveSpeechThreshold: 0.55,
     // Minimum frames to consider valid speech (prevents short noises)
-    minSpeechFrames: 2,
-    // Callback when speech ends
+    minSpeechFrames: 6,
+    // Callbacks for speech detection
     onSpeechEnd: handleSpeechEnd,
+    onSpeechStart: handleSpeechStart,
     // Audio tweaks for better quality
     additionalAudioConstraints: {},
   });
 
-  // Control VAD based on props
+  // Listen for transcript changes to detect when a new message arrives
   useEffect(() => {
-    if (isEnabled && !ttsPlayingMessageId && !isProcessingVoice) {
+    // Update the timestamp when a message completes processing
+    if (!isProcessingVoice) {
+      lastMessageTimeRef.current = Date.now();
+    }
+  }, [isProcessingVoice]);
+
+  // Control VAD based on props and TTS state
+  useEffect(() => {
+    // Start listening in these cases:
+    // 1. VAD is enabled AND (not processing voice) AND either:
+    //    a. No TTS is playing, or
+    //    b. We just received a text message (within last 500ms)
+    const justReceivedMessage = Date.now() - lastMessageTimeRef.current < 500;
+    
+    if (isEnabled && !isProcessingVoice && (!ttsPlayingMessageId || justReceivedMessage)) {
       if (!vad.listening && !vad.loading) {
         vad.start();
         logClientEvent({
-          type: "vad_started",
+          type: "vad_started", 
+          interruptingTTS: !!ttsPlayingMessageId
         });
       }
     } else {
@@ -114,6 +144,14 @@ const VADProcessor: React.FC<VADProcessorProps> = ({
       }
     }
   }, [isEnabled, ttsPlayingMessageId, isProcessingVoice, vad, logClientEvent]);
+
+  // Update lastMessageTime when TTS stops playing to start listening again
+  useEffect(() => {
+    if (!ttsPlayingMessageId) {
+      // TTS just stopped playing, update timestamp to enable listening
+      lastMessageTimeRef.current = Date.now();
+    }
+  }, [ttsPlayingMessageId]);
 
   return null; // This is a non-visual component
 };

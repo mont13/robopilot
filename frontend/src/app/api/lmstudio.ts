@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "@/app/config/api";
+import { LLMConnectionResponse } from "@/app/api/connections";
 
 // Types
 export interface ModelInfo {
@@ -46,7 +47,8 @@ export interface TextResponse {
 // Health check
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/lmstudio/health`);
+    // Try to get the active connection as a health check
+    const response = await fetch(`${API_BASE_URL}/api/connections/active/`);
     return response.ok;
   } catch (error) {
     console.error("Health check failed:", error);
@@ -55,9 +57,9 @@ export async function checkHealth(): Promise<boolean> {
 }
 
 // Models
-export async function listModels(): Promise<ModelInfo[]> {
+export async function listModels(): Promise<LLMConnectionResponse[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/lmstudio/models`);
+    const response = await fetch(`${API_BASE_URL}/api/connections/`);
     if (!response.ok) {
       throw new Error(`Failed to list models: ${response.status}`);
     }
@@ -70,17 +72,21 @@ export async function listModels(): Promise<ModelInfo[]> {
 
 export async function listLoadedModels(
   modelType?: string,
-): Promise<ModelInfo[]> {
+): Promise<LLMConnectionResponse[]> {
   try {
-    const url = modelType
-      ? `${API_BASE_URL}/api/lmstudio/models/loaded?model_type=${modelType}`
-      : `${API_BASE_URL}/api/lmstudio/models/loaded`;
+    // The API doesn't have direct endpoint for loaded models anymore
+    // So we'll get all connections and filter the active ones
+    const url = `${API_BASE_URL}/api/connections/`;
 
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Failed to list loaded models: ${response.status}`);
     }
-    return await response.json();
+    
+    const connections: LLMConnectionResponse[] = await response.json();
+    return modelType 
+      ? connections.filter(conn => conn.provider === modelType)
+      : connections.filter(conn => conn.is_active);
   } catch (error) {
     console.error("Error listing loaded models:", error);
     throw error;
@@ -88,24 +94,31 @@ export async function listLoadedModels(
 }
 
 export async function loadModel(
-  modelKey: string,
+  connectionId: string,
   ttl?: number,
-): Promise<ModelInfo> {
+): Promise<LLMConnectionResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/lmstudio/models/load`, {
+    const response = await fetch(`${API_BASE_URL}/api/connections/${connectionId}/activate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model_key: modelKey, ttl }),
+      body: JSON.stringify({ ttl }),
     });
 
     if (!response.ok) {
       throw new Error(`Failed to load model: ${response.status}`);
     }
-    return await response.json();
+    
+    // Get the complete connection details after activation
+    const activeResponse = await fetch(`${API_BASE_URL}/api/connections/active/`);
+    if (!activeResponse.ok) {
+      throw new Error(`Failed to get active connection: ${activeResponse.status}`);
+    }
+    
+    return await activeResponse.json();
   } catch (error) {
-    console.error(`Error loading model ${modelKey}:`, error);
+    console.error(`Error loading model ${connectionId}:`, error);
     throw error;
   }
 }

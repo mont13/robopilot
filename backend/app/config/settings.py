@@ -4,7 +4,6 @@ from typing import Any, Optional
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
-from uvicorn.config import LOG_LEVELS
 
 
 class Environment(Enum):
@@ -42,10 +41,6 @@ class Settings(BaseSettings):
     otel_service_name: Optional[str] = None
     otel_exporter_otlp_endpoint: Optional[str] = None
 
-    # LM Studio settings
-    lmstudio_host: str = "http://localhost:1234"
-    lmstudio_default_model: Optional[str] = None  # Use default model if None
-
     model_config = {"env_prefix": ""}  # No prefix for environment variables
 
     ALLOWED_CORS_ORIGINS: set = [
@@ -58,12 +53,6 @@ class Settings(BaseSettings):
             return "main"
         else:
             return "dev"
-
-    @field_validator("log_level")
-    def valid_loglevel(cls, level: str) -> str:
-        if level not in LOG_LEVELS.keys():
-            raise ValueError(f"log_level must be one of {LOG_LEVELS.keys()}")
-        return level
 
     @field_validator("db_retry_window_seconds")
     def init_db_retry_window_seconds(cls, v: int, info: Any) -> int:  # noqa

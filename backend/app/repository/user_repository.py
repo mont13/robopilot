@@ -62,7 +62,6 @@ class UserRepository(BaseRepository):
             user = await session.get(UserOrm, user_id)
             if user:
                 user.refresh_token = refresh_token
-                await session.commit()
 
     async def delete_user_refresh_token(self, user_id: int) -> None:
         """

@@ -9,27 +9,10 @@ from typing import Any, Dict, List, Optional
 
 from app.models.chat_session import ChatMessage as DbChatMessage
 from app.models.chat_session import ChatSession as DbChatSession
+from app.models.function_call import FunctionCall
 from app.repository.base_repository import BaseRepository
 from app.utils.db_session import get_db_session
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text, select
-from sqlalchemy.ext.declarative import declarative_base
-
-# Define new model for function calls
-Base = declarative_base()
-
-
-class FunctionCall(Base):
-    """Model for storing function calls."""
-
-    __tablename__ = "function_calls"
-
-    id = Column(String, primary_key=True)
-    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"))
-    message_id = Column(String, ForeignKey("chat_messages.id", ondelete="CASCADE"))
-    function_name = Column(String, nullable=False)
-    arguments = Column(Text)  # JSON serialized arguments
-    result = Column(Text)  # JSON serialized result
-    created_at = Column(DateTime, default=datetime.now)
+from sqlalchemy import select
 
 
 class ChatSessionRepository(BaseRepository):
@@ -89,7 +72,6 @@ class ChatSessionRepository(BaseRepository):
             if chat_session:
                 chat_session.name = name
                 chat_session.updated_at = datetime.now()
-                await session.commit()
                 await session.refresh(chat_session)
                 return chat_session
             return None
@@ -102,7 +84,6 @@ class ChatSessionRepository(BaseRepository):
             chat_session = await session.get(DbChatSession, session_id)
             if chat_session:
                 await session.delete(chat_session)
-                await session.commit()
                 return True
             return False
 
@@ -143,7 +124,6 @@ class ChatSessionRepository(BaseRepository):
 
             # Add message to session
             session.add(message)
-            await session.commit()
 
             # No refresh needed as we return the object we created
             return message
@@ -190,7 +170,6 @@ class ChatSessionRepository(BaseRepository):
                     chat_session.updated_at = datetime.now()
 
                 await session.delete(message)
-                await session.commit()
                 return True
             return False
 
@@ -235,7 +214,6 @@ class ChatSessionRepository(BaseRepository):
             )
 
             session.add(function_call)
-            await session.commit()
 
             return function_call_id
 

@@ -41,10 +41,10 @@ def upgrade() -> None:
             {
                 "id": str(uuid.uuid4()),
                 "name": "Local Ollama",
-                "provider": "ollama",
-                "model_name": "mistral",  # Default model
+                "provider": "OLLAMA",
+                "model_name": "llama3.2:3b",  # Default model
                 "base_url": "http://host.docker.internal:11434/v1",
-                "api_key": None,
+                "api_key": "NA",
                 "is_active": False,  # LM Studio is active by default
                 "config_json": json.dumps(
                     {

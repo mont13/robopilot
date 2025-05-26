@@ -41,10 +41,10 @@ def upgrade() -> None:
             {
                 "id": str(uuid.uuid4()),
                 "name": "Local LM Studio",
-                "provider": "lmstudio",
+                "provider": "LMSTUDIO",
                 "model_name": "gemma-3-4b-it-qat",
-                "base_url": "http://localhost:1234/v1",
-                "api_key": None,
+                "base_url": "http://host.docker.internal:1234/v1",
+                "api_key": "NA",
                 "is_active": True,
                 "config_json": json.dumps(
                     {

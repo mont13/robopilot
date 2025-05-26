@@ -15,6 +15,12 @@ class BaseRepository:
     async def save(self, data):
         async with get_db_session() as session:
             session.add(data)
+            # Make sure changes are flushed to the database to get server-generated values
+            # This makes the object persistent within the session
+            await session.flush()
+            # Refresh to ensure we have the most up-to-date values
+            await session.refresh(data)
+            # The session will be committed when the context manager exits
             return data
 
     async def delete(self, data):

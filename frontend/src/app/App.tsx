@@ -11,10 +11,13 @@ import { useTranscript } from "@/app/contexts/TranscriptContext";
 // Components
 import AudioSettings from "./components/AudioSettings";
 import BottomToolbar from "./components/BottomToolbar";
+import ConnectionSelection from "./components/chat/ConnectionSelection";
 import SessionList from "./components/chat/SessionList";
 import ModeSelection from "./components/ModeSelection";
 import Transcript from "./components/Transcript";
 import VADProcessor from "./components/VADProcessor";
+
+import ConnectionModal from "./components/modals/ConnectionModal";
 
 function AppContent() {
   const { addTranscriptMessage, updateTranscriptItemStatus } = useTranscript();
@@ -38,9 +41,12 @@ function AppContent() {
     sendUserMessage,
     chatSessions,
     currentSession,
+    connections,
+    activeConnection,
     loadChatSession,
     deleteChatSessionById,
     createNewChatSession,
+    activateConnectionById,
   } = useLMStudio();
 
   // Interaction mode state
@@ -52,9 +58,12 @@ function AppContent() {
   const [userText, setUserText] = useState<string>("");
   const [showAudioSettings, setShowAudioSettings] = useState<boolean>(false);
   const [showSessions, setShowSessions] = useState<boolean>(false);
+  const [showConnections, setShowConnections] = useState<boolean>(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState<boolean>(true);
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const [vadEnabled, setVadEnabled] = useState<boolean>(false);
+  const [isConnectionLoading, setIsConnectionLoading] = useState<boolean>(false);
+  const [isConnectionModalOpen, setIsConnectionModalOpen] = useState<boolean>(false);
 
   // Handle sending typed text message
   const handleSendTextMessage = useCallback(async () => {
@@ -140,6 +149,7 @@ function AppContent() {
     stopTextToSpeech,
     startRecording,
     vadEnabled,
+    setVadEnabled,
   ]);
 
   const onToggleConnection = useCallback(() => {
@@ -170,7 +180,41 @@ function AppContent() {
   // Toggle sessions panel
   const toggleSessions = useCallback(() => {
     setShowSessions((prev) => !prev);
+    if (showConnections) setShowConnections(false);
+  }, [showConnections]);
+
+  // Toggle connections panel
+  const toggleConnections = useCallback(() => {
+    setShowConnections((prev) => !prev);
+    if (showSessions) setShowSessions(false);
+  }, [showSessions]);
+  
+  // Function to open the connection modal
+  const handleCreateNewConnection = useCallback(() => {
+    setIsConnectionModalOpen(true);
   }, []);
+
+  // Function to handle when a new connection is created
+  const handleConnectionCreated = useCallback(() => {
+    // Refresh the connections list
+    connect();
+  }, [connect]);
+
+  // Handle connection selection
+  const handleSelectConnection = useCallback(async (connectionId: string) => {
+    if (connectionId && sessionStatus === "CONNECTED") {
+      setIsConnectionLoading(true);
+      try {
+        await activateConnectionById(connectionId);
+      } finally {
+        setIsConnectionLoading(false);
+        // Close connections panel on mobile
+        if (isMobile) {
+          setShowConnections(false);
+        }
+      }
+    }
+  }, [activateConnectionById, sessionStatus, isMobile]);
 
   // Check if we're on mobile and load saved settings from local storage
   useEffect(() => {
@@ -268,7 +312,7 @@ function AppContent() {
   }
 
   return (
-    <div className="text-base flex flex-col h-screen bg-gray-100 text-gray-800 relative">
+    <div className="text-base flex flex-col h-screen bg-gray-50 text-gray-800 relative">
       <div className="p-2 md:p-3 text-lg font-semibold flex justify-between items-center shadow-sm">
         <div
           className="flex items-center cursor-pointer"
@@ -294,31 +338,47 @@ function AppContent() {
                 sessionStorage.setItem("interactionMode", newMode);
               }
             }}
-            className="text-xs md:text-sm bg-gray-200 hover:bg-gray-300 rounded-full px-2 py-1 flex items-center"
+            className="text-xs md:text-sm bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-full px-3 py-1 flex items-center border border-blue-200"
           >
             {interactionMode === "chat" ? "Voice" : "Chat"}
           </button>
 
-          {(interactionMode === "chat" || interactionMode === "voice") && (
-            <button
-              onClick={toggleSessions}
-              className="text-gray-700 hover:text-gray-900 p-1 rounded-full hover:bg-gray-200"
-              aria-label="Sessions"
+          <button
+            onClick={toggleSessions}
+            className="text-gray-600 hover:text-gray-900 p-1 rounded-full hover:bg-blue-50"
+            aria-label="Sessions"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5"
+              viewBox="0 0 20 20"
+              fill="currentColor"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" />
-              </svg>
-            </button>
-          )}
+              <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" />
+            </svg>
+          </button>
+
+          <button
+            onClick={toggleConnections}
+            className="text-gray-600 hover:text-gray-900 p-1 rounded-full hover:bg-blue-50"
+            aria-label="Connections"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path fillRule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3.293 1.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L7.586 10 5.293 7.707a1 1 0 010-1.414zM11 12a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+            </svg>
+            {activeConnection && (
+              <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-green-500"></span>
+            )}
+          </button>
 
           <button
             onClick={toggleAudioSettings}
-            className="text-gray-700 hover:text-gray-900 p-1 rounded-full hover:bg-gray-200"
+            className="text-gray-600 hover:text-gray-900 p-1 rounded-full hover:bg-blue-50"
             aria-label="Audio Settings"
           >
             <svg
@@ -343,9 +403,9 @@ function AppContent() {
 
       <div className="flex flex-1 px-2 sm:px-4 pt-4 overflow-hidden relative">
         {showSessions && (interactionMode === "chat" || interactionMode === "voice") && (
-          <div className="w-full sm:w-2/5 md:w-1/3 lg:w-1/4 bg-white rounded-lg mr-0 sm:mr-2 overflow-hidden shadow-lg absolute sm:relative z-10 top-0 left-0 h-full">
-            <div className="flex items-center justify-between p-2 sm:hidden bg-gray-100 border-b">
-              <h3 className="font-medium">Chat Sessions</h3>
+          <div className="w-full sm:w-2/5 md:w-1/3 lg:w-1/4 bg-white rounded-lg mr-0 sm:mr-2 overflow-hidden shadow-md absolute sm:relative z-10 top-0 left-0 h-full">
+            <div className="flex items-center justify-between p-2 sm:hidden bg-gray-50 border-b">
+                <h3 className="font-medium">Chat Sessions</h3>
               <button
                 onClick={toggleSessions}
                 className="text-gray-600 p-1 rounded hover:bg-gray-200"
@@ -374,6 +434,40 @@ function AppContent() {
             />
           </div>
         )}
+        
+        {showConnections && (interactionMode === "chat" || interactionMode === "voice") && (
+          <div className="w-full sm:w-2/5 md:w-1/3 lg:w-1/4 bg-white rounded-lg mr-0 sm:mr-2 overflow-hidden shadow-lg absolute sm:relative z-10 top-0 left-0 h-full">
+            <div className="flex items-center justify-between p-2 sm:hidden bg-gray-50 border-b">
+                <h3 className="font-medium">LLM Connections</h3>
+              <button
+                onClick={toggleConnections}
+                className="text-gray-600 p-1 rounded hover:bg-gray-200"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="p-3 sm:p-4 h-full">
+              <ConnectionSelection
+                connections={connections}
+                activeConnection={activeConnection}
+                onSelectConnection={handleSelectConnection}
+                onCreateConnection={handleCreateNewConnection}
+                isLoading={isConnectionLoading}
+              />
+            </div>
+          </div>
+        )}
         <Transcript
           mode={interactionMode}
           userText={userText}
@@ -388,21 +482,27 @@ function AppContent() {
         />
 
         {/* Voice Activity Detection for voice mode */}
-        {interactionMode === "voice" &&
-          sessionStatus === "CONNECTED" &&
-          isAudioEnabled && (
-            <VADProcessor
-              isEnabled={
-                vadEnabled &&
-                sessionStatus === "CONNECTED" &&
-                isAudioEnabled &&
-                !isRecording &&
-                !ttsPlayingMessageId
-              }
-            />
-          )}
+          {interactionMode === "voice" &&
+            sessionStatus === "CONNECTED" &&
+            isAudioEnabled && (
+              <VADProcessor
+                isEnabled={
+                  vadEnabled &&
+                  sessionStatus === "CONNECTED" &&
+                  isAudioEnabled &&
+                  !isRecording
+                }
+                onVoiceProcessing={(processing) => {
+                  if (processing && ttsPlayingMessageId) {
+                    stopTextToSpeech();
+                  }
+                }}
+              />
+            )}
       </div>
 
+
+        
       <BottomToolbar
         sessionStatus={sessionStatus}
         onToggleConnection={onToggleConnection}
@@ -415,6 +515,12 @@ function AppContent() {
         }}
         vadEnabled={interactionMode === "voice" ? vadEnabled : undefined}
         setVadEnabled={interactionMode === "voice" ? setVadEnabled : undefined}
+      />
+      {/* Connection Modal */}
+      <ConnectionModal
+        isOpen={isConnectionModalOpen}
+        onClose={() => setIsConnectionModalOpen(false)}
+        onConnectionCreated={handleConnectionCreated}
       />
     </div>
   );

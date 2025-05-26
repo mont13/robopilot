@@ -72,16 +72,9 @@ async def transcribe_audio(
         filename = f"audio_input_{os.getpid()}{os.path.splitext(file.filename)[1]}"
         temp_path = os.path.join(SHARED_TEMP_DIR, filename)
 
-        # Create a backup of the audio in the records directory
-        record_path = os.path.join("/home/appuser/records", filename)
-
         # Write uploaded file content to file in shared temp directory
         content = await file.read()
         with open(temp_path, "wb") as f:
-            f.write(content)
-
-        # Create a backup of the audio in the records directory
-        with open(record_path, "wb") as f:
             f.write(content)
 
         options = {}

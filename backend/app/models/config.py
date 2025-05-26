@@ -3,12 +3,21 @@ Database models for configuration settings.
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, Column, DateTime, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLAlchemyEnum, String, Text
 
 from app.models.base import Base
+
+
+class ProviderType(str, Enum):
+    """Enum for supported LLM providers."""
+    OPENAI = "openai"
+    GEMINI = "gemini"
+    LMSTUDIO = "lmstudio"
+    OLLAMA = "ollama"
 
 
 class LLMConnection(Base):
@@ -19,8 +28,10 @@ class LLMConnection(Base):
     id = Column(String(36), primary_key=True, index=True)
     name = Column(String(100), nullable=False)
     provider = Column(
-        String(50), nullable=False
-    )  # e.g., "openai", "azure", "lmstudio", "ollama"
+        SQLAlchemyEnum(ProviderType, native_enum=False),
+        nullable=False,
+        default=ProviderType.LMSTUDIO
+    )
     model_name = Column(String(100), nullable=False)
     base_url = Column(String(255), nullable=True)
     api_key = Column(Text, nullable=True)
@@ -39,17 +50,15 @@ class LLMConnectionCreate(BaseModel):
     """Schema for creating an LLM connection."""
 
     name: str = Field(..., description="Display name for this connection")
-    provider: str = Field(
-        ..., description="Provider type (openai, azure, lmstudio, ollama, etc)"
+    provider: ProviderType = Field(
+        ..., description="Provider type (openai, gemini, lmstudio, ollama)"
     )
     model_name: str = Field(..., description="Name of the model to use")
     base_url: Optional[str] = Field(None, description="Base URL for API endpoint")
     api_key: Optional[str] = Field(None, description="API key (will be encrypted)")
     api_version: Optional[str] = Field(None, description="API version (for Azure)")
     is_active: bool = Field(False, description="Whether this is the active connection")
-    config: Optional[Dict[str, Any]] = Field(
-        None, description="Additional configuration options"
-    )
+
 
 
 class LLMConnectionResponse(BaseModel):
@@ -57,21 +66,21 @@ class LLMConnectionResponse(BaseModel):
 
     id: str
     name: str
-    provider: str
+    provider: ProviderType
     model_name: str
     base_url: Optional[str] = None
     api_version: Optional[str] = None
     is_active: bool
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
+    config: Optional[str] = None
 
 
 class LLMConnectionUpdate(BaseModel):
     """Schema for updating an LLM connection."""
 
     name: Optional[str] = None
-    provider: Optional[str] = None
+    provider: Optional[ProviderType] = None
     model_name: Optional[str] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
@@ -81,7 +90,11 @@ class LLMConnectionUpdate(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    """Configuration for an LLM to be used with PraisonAI."""
+    """
+    Configuration for an LLM to be used with PraisonAI.
+    This is the central configuration model that standardizes
+    how we pass LLM settings to the PraisonAI agents.
+    """
 
     model: str
     api_key: Optional[str] = None

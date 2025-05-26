@@ -1,727 +1,429 @@
 """
-Controller for LM Studio API integration.
+Chat API Controller for AI-powered conversational interfaces.
+
+This module provides a comprehensive REST API for managing chat sessions and
+processing messages through Language Learning Models (LLMs). It supports
+advanced features like function calling, streaming responses, and persistent
+conversation history.
+
+Features:
+- Chat session management (create, read, update, delete)
+- AI-powered message processing with OpenAI-compatible APIs
+- Function/tool calling for robot control and automation
+- Streaming and non-streaming response modes
+- Persistent conversation history with message timestamps
+- Automatic session management and recovery
+- Comprehensive error handling and logging
+
+The API is designed to work with various LLM providers including OpenAI,
+LM Studio, Ollama, and other OpenAI-compatible endpoints.
 """
 
+import asyncio
 import json
 import logging
-import time
 from typing import List, Optional, Union
 
-import lmstudio as lms
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..config.settings import get_settings
 from ..repository.chat_session_repository import ChatSessionRepository
-from ..repository.llm_connection_repository import LLMConnectionRepository
-from ..utils.lmstudio_client import ChatMessage, ChatSession, LMStudioClient
-from ..utils.lmstudio_tools import PREDEFINED_TOOLS
-from ..utils.praison_integration.agents import (
-    get_llm_config,
-    process_with_multi_agents_async,
+from ..utils.lmstudio_client import ChatMessage, ChatSession
+from ..utils.lmstudio_tools import (
+    robot_control_gripper,
+    robot_gripper_led_control,
+    robot_move_home,
+    robot_move_to_specified_position,
+    robot_reset_all,
+    robot_run_pick_and_place_cycle,
 )
+from ..utils.openai_utils.config import get_llm_config
+from ..utils.openai_utils.function_calling import handle_function_calls
+from ..utils.openai_utils.openai_client import OpenAIClient
 
-# Set up logging
+# Configure logging for this module
 logger = logging.getLogger(__name__)
 
-# Get settings
+# Load application settings
 settings = get_settings()
 
-# Create router with prefix and tag
-router = APIRouter(prefix="/lmstudio", tags=["LM Studio"])
-
-# Initialize the LM Studio client
-lmstudio_client = None
-
-
-def get_lmstudio_client():
-    """Get or initialize the LM Studio client."""
-    global lmstudio_client
-    if lmstudio_client is None:
-        try:
-            lmstudio_client = LMStudioClient(host=settings.lmstudio_host)
-            logger.info("LM Studio client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize LM Studio client: {str(e)}")
-            error_detail = f"""
-Failed to initialize LM Studio: {str(e)}
-
-Troubleshooting:
-1. Make sure LM Studio is running on {settings.lmstudio_host}
-2. Check if the port 1234 is accessible from the container
-3. Try restarting the LM Studio server
-"""
-            raise HTTPException(status_code=500, detail=error_detail)
-
-    return lmstudio_client
+# Create FastAPI router with comprehensive metadata
+router = APIRouter(
+    prefix="/lmstudio",
+    tags=["Chat API"],
+    responses={
+        400: {"description": "Bad Request - Invalid input parameters"},
+        404: {"description": "Not Found - Resource does not exist"},
+        500: {"description": "Internal Server Error - Server-side error occurred"},
+    },
+)
 
 
-# Add repository dependency
-def get_chat_repository():
-    """Get chat session repository."""
+# ============================================================================
+# DEPENDENCY INJECTION FUNCTIONS
+# ============================================================================
+
+
+def get_openai_client(api_key: str, base_url: str) -> OpenAIClient:
+    """
+    Initialize and configure an OpenAI client with registered robot tools.
+
+    This function creates an OpenAI-compatible client and registers all available
+    robot control tools that can be called by the language model during conversations.
+
+    Args:
+        api_key (str): API key for authentication with the LLM service
+        base_url (str): Base URL of the LLM service endpoint
+
+    Returns:
+        OpenAIClient: Configured client instance with registered tools
+
+    Raises:
+        HTTPException: If client initialization fails
+
+    Registered Tools:
+        - robot_move_home: Move robot to home position
+        - robot_control_gripper: Control gripper open/close operations
+        - robot_gripper_led_control: Control gripper LED indicators
+        - robot_move_to_specified_position: Move robot to specific coordinates
+        - robot_reset_all: Reset all robot systems to default state
+        - robot_run_pick_and_place_cycle: Execute automated pick and place sequence
+    """
+    try:
+        logger.info(f"Initializing OpenAI client with base_url: {base_url}")
+
+        # Create OpenAI client instance
+        openai_client = OpenAIClient(
+            api_key=api_key,
+            base_url=base_url,
+        )
+
+        # Register all available robot control tools
+        robot_tools = [
+            robot_move_home,
+            robot_control_gripper,
+            robot_gripper_led_control,
+            robot_move_to_specified_position,
+            robot_reset_all,
+            robot_run_pick_and_place_cycle,
+        ]
+
+        for tool in robot_tools:
+            openai_client.register_tool(tool)
+            logger.debug(f"Registered tool: {tool.__name__}")
+
+        logger.info("OpenAI client initialized successfully with all tools registered")
+        return openai_client
+
+    except Exception as e:
+        error_msg = f"Failed to initialize OpenAI client: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(
+            status_code=500,
+            detail=error_msg,
+        )
+
+
+def get_chat_repository() -> ChatSessionRepository:
+    """
+    Factory function to create a ChatSessionRepository instance.
+
+    This function provides dependency injection for the chat session repository,
+    ensuring consistent database access patterns across all endpoints.
+
+    Returns:
+        ChatSessionRepository: Repository instance for chat session operations
+
+    Note:
+        This function is used as a FastAPI dependency to inject the repository
+        into endpoint handlers, promoting separation of concerns and testability.
+    """
     return ChatSessionRepository()
 
 
-# Simplified request and response models
-class ModelInfo(BaseModel):
-    """Model for LM Studio model information."""
+# ============================================================================
+# REQUEST/RESPONSE MODELS
+# ============================================================================
 
-    id: str
-    name: Optional[str] = None
-    type: Optional[str] = None
-    instance_id: Optional[str] = None
-    context_length: Optional[int] = None
+
+class ModelInfo(BaseModel):
+    """
+    Information about a language model.
+
+    This model represents metadata about available language models,
+    including their capabilities and current status.
+    """
+
+    id: str = Field(..., description="Unique identifier for the model")
+    name: str = Field(..., description="Human-readable name of the model")
+    status: str = Field(..., description="Current status (loaded, unloaded, error)")
+    context_length: Optional[int] = Field(
+        None, description="Maximum context length in tokens", ge=1, le=1000000
+    )
 
 
 class LoadModelRequest(BaseModel):
-    """Request model for loading a model."""
+    """
+    Request to load a specific language model.
 
-    model_key: str = Field(..., description="The key/name of the model to load")
-    ttl: Optional[int] = Field(
-        None, description="Time to live (idle seconds until auto-unload)"
+    Used for dynamically loading models into memory for inference.
+    """
+
+    model_path: str = Field(..., description="File system path to the model")
+    model_id: Optional[str] = Field(None, description="Optional custom identifier")
+    context_length: Optional[int] = Field(
+        None, description="Override default context length", ge=1, le=1000000
     )
 
 
 class ChatSessionResponse(BaseModel):
-    """Response model for a chat session."""
+    """
+    Complete chat session data with messages and metadata.
 
-    id: str
-    name: Optional[str] = None
-    messages: List[ChatMessage] = []
-    created_at: str = None
-    updated_at: str = None
+    This model represents a full chat session including all messages,
+    timestamps, and session metadata for API responses.
+    """
+
+    id: str = Field(..., description="Unique session identifier")
+    name: str = Field(..., description="Session display name")
+    messages: List[ChatMessage] = Field(
+        default_factory=list,
+        description="Chronologically ordered messages in the session",
+    )
+    created_at: Optional[str] = Field(None, description="ISO timestamp of creation")
+    updated_at: Optional[str] = Field(None, description="ISO timestamp of last update")
 
 
 class ChatSessionListResponse(BaseModel):
-    """Response model for listing chat sessions."""
+    """
+    Container for multiple chat sessions.
 
-    sessions: List[ChatSessionResponse]
+    Used when returning lists of chat sessions from the API.
+    """
+
+    sessions: List[ChatSessionResponse] = Field(
+        default_factory=list, description="Array of chat sessions"
+    )
 
 
 class CreateChatSessionRequest(BaseModel):
-    """Request model for creating a chat session."""
+    """
+    Request to create a new chat session.
 
-    name: Optional[str] = Field(None, description="Optional name for the chat session")
+    Validates session creation parameters and provides defaults.
+    """
+
+    name: Optional[str] = Field(
+        None,
+        description="Optional session name (auto-generated if not provided)",
+        min_length=1,
+        max_length=100,
+    )
 
 
 class SingleMessageRequest(BaseModel):
-    """Request model for processing a single message."""
+    """
+    Request to process a single message in a conversation.
 
-    role: str = Field(..., description="Role of the message (system, user, assistant)")
-    content: str = Field(..., description="Message content")
-    temperature: float = Field(0.7, description="Temperature for generation")
-    max_tokens: int = Field(512, description="Maximum tokens to generate")
-    stream: bool = Field(False, description="Whether to stream the response")
-    use_praison: bool = Field(
-        False, description="Whether to use PraisonAI agents for processing"
+    This model handles all types of messages (user, system, assistant)
+    and includes parameters for controlling AI response generation.
+    """
+
+    role: str = Field(
+        ...,
+        description="Message role (system, user, assistant)",
+        pattern="^(system|user|assistant)$",
     )
+    content: str = Field(
+        ..., description="Message content text", min_length=1, max_length=100000
+    )
+    temperature: Optional[float] = Field(
+        0.7,
+        description="Sampling temperature for response generation (0.0-2.0)",
+        ge=0.0,
+        le=2.0,
+    )
+    max_tokens: Optional[int] = Field(
+        512, description="Maximum tokens to generate in response", ge=1, le=8192
+    )
+    stream: bool = Field(False, description="Enable streaming response mode")
 
 
 class TextResponse(BaseModel):
-    """Response model for text generation."""
+    """
+    Simple text response from the AI.
 
-    text: str
+    Standard response format for non-streaming text generation.
+    """
+
+    text: str = Field(..., description="Generated response text")
 
 
 class ImageAnalysisRequest(BaseModel):
-    """Request model for image analysis."""
-
-    prompt: str = Field(..., description="Text prompt to accompany the image")
-    image_path: str = Field(..., description="Path to the image file")
-
-
-class PraisonAgentsRequest(BaseModel):
-    """Request model for PraisonAI multi-agent processing."""
-
-    message: str = Field(..., description="User message to process")
-    session_id: Optional[str] = Field(None, description="Session ID for chat history")
-    async_execution: bool = Field(
-        False, description="Whether to execute asynchronously"
-    )
-    stream: bool = Field(False, description="Whether to stream the response")
-    temperature: float = Field(0.7, description="Temperature for generation")
-    tools_enabled: bool = Field(True, description="Whether to enable tool usage")
-    connection_id: Optional[str] = Field(
-        None, description="ID of LLM connection to use"
-    )
-
-
-class PraisonAgentsTestRequest(BaseModel):
-    """Test request for PraisonAI integration with comprehensive options."""
-
-    message: str = Field(..., description="User message to process")
-    session_id: Optional[str] = Field(None, description="Session ID for chat history")
-    session_name: Optional[str] = Field(
-        None, description="Name for new session if created"
-    )
-    stream: bool = Field(False, description="Whether to stream the response")
-    temperature: float = Field(0.7, description="Temperature for generation")
-    tools_enabled: bool = Field(True, description="Whether to enable tools")
-    load_history: bool = Field(True, description="Whether to load chat history")
-    save_history: bool = Field(True, description="Whether to save messages to history")
-    reflection_enabled: bool = Field(True, description="Enable agent self-reflection")
-    reflection_depth: int = Field(2, description="Depth of agent self-reflection")
-    include_function_calls: bool = Field(
-        True, description="Include function call history"
-    )
-    connection_id: Optional[str] = Field(
-        None, description="ID of LLM connection to use"
-    )
-
-
-@router.post("/praison/chat", response_model=TextResponse)
-async def process_with_praison_agents(
-    request: PraisonAgentsRequest,
-    client: LMStudioClient = Depends(get_lmstudio_client),
-):
     """
-    Process a message using PraisonAI agents with chat history support.
+    Request for image analysis with AI.
 
-    This endpoint provides dedicated access to PraisonAI multi-agent processing
-    with full chat history integration.
+    Supports multimodal AI capabilities for processing images with text prompts.
+    Note: This functionality may require specific model capabilities.
     """
-    try:
-        # Get repository for chat operations
-        repo = ChatSessionRepository()
 
-        # Get specified session or active session or create a new one
-        session_id = request.session_id
-        if session_id:
-            # Check if session exists
-            chat_session = await repo.get_session_by_id(session_id)
-            if not chat_session:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Chat session with ID {session_id} not found",
-                )
-        else:
-            # Get active session or create new one
-            active_session = await repo.get_active_session()
-            if not active_session:
-                active_session = await repo.create_session("New PraisonAI Chat")
-            session_id = active_session.id
-
-        logger.info(f"Processing with PraisonAI agents for session {session_id}")
-
-        # Get specific LLM config if connection_id is provided
-        llm_config = None
-        if request.connection_id:
-            # Get connection from repository
-            llm_repo = LLMConnectionRepository()
-            connection = await llm_repo.get_connection_by_id(request.connection_id)
-            if not connection:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"LLM connection with ID {request.connection_id} not found",
-                )
-            # Convert to LLM config
-            llm_config = llm_repo.connection_to_llm_config(connection).model_dump()
-            logger.info(
-                f"Using LLM connection: {connection.name} ({connection.provider})"
-            )
-
-        # Process with PraisonAI agents
-        result = await process_with_multi_agents_async(
-            user_input=request.message,
-            session_id=session_id,
-            chat_repository=repo,
-            llm_config=llm_config,
-        )
-
-        # Save messages to the database
-        messages_to_save = result.get("messages_to_save", [])
-        for message in messages_to_save:
-            message_id = await repo.add_message(
-                session_id=session_id, role=message["role"], content=message["content"]
-            )
-            logger.debug(f"Saved {message['role']} message to session {session_id}")
-
-            # Log function calls if any were made
-            if message["role"] == "assistant" and result.get("tool_calls"):
-                for tool_call in result.get("tool_calls", []):
-                    try:
-                        await repo.log_function_call(
-                            session_id=session_id,
-                            message_id=message_id.id if message_id else None,
-                            function_name=tool_call.get(
-                                "function_name", "unknown_function"
-                            ),
-                            arguments=tool_call.get("arguments", {}),
-                            result=tool_call.get("result", None),
-                        )
-                        logger.info(
-                            f"Logged function call {tool_call.get('function_name')} for session {session_id}"
-                        )
-                    except Exception as func_err:
-                        logger.error(f"Error logging function call: {func_err}")
-
-        # Extract response
-        response_text = result.get("response", "")
-        if not response_text:
-            # This should rarely happen now as we handle this in the agent process
-            response_text = "No response generated from agents."
-
-        # If streaming is requested, return a streaming response
-        if request.stream:
-
-            async def response_generator():
-                # Yield the entire response as a single chunk
-                yield f"data: {json.dumps({'text': response_text})}\n\n"
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(
-                response_generator(), media_type="text/event-stream"
-            )
-        else:
-            return {"text": response_text}
-
-    except Exception as e:
-        logger.error(f"Failed to process with PraisonAI agents: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to process with PraisonAI agents: {str(e)}"
-        )
-
-
-@router.post("/praison/test", response_model=TextResponse)
-async def test_praison_integration(
-    request: PraisonAgentsTestRequest,
-    client: LMStudioClient = Depends(get_lmstudio_client),
-):
-    """
-    Test endpoint for PraisonAI integration with comprehensive configuration options.
-
-    This endpoint allows testing various features of the PraisonAI integration:
-    - Chat history loading and saving
-    - Tool usage and function call logging
-    - Agent self-reflection
-    - Session management
-    - LLM connection selection
-    """
-    try:
-        # Get repository for chat operations
-        repo = ChatSessionRepository()
-
-        # Session management
-        session_id = request.session_id
-        if session_id:
-            # Check if session exists
-            chat_session = await repo.get_session_by_id(session_id)
-            if not chat_session:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Chat session with ID {session_id} not found",
-                )
-        else:
-            # Get active session or create new one
-            active_session = await repo.get_active_session()
-            if not active_session:
-                session_name = request.session_name or "PraisonAI Test Session"
-                active_session = await repo.create_session(session_name)
-            session_id = active_session.id
-
-        logger.info(f"Testing PraisonAI with session {session_id}")
-
-        # Construct the response object for debugging/monitoring
-        debug_info = {
-            "session_id": session_id,
-            "config": {
-                "tools_enabled": request.tools_enabled,
-                "load_history": request.load_history,
-                "save_history": request.save_history,
-                "reflection_enabled": request.reflection_enabled,
-                "reflection_depth": request.reflection_depth,
-                "temperature": request.temperature,
-            },
-        }
-
-        # Add chat history loading info to debug
-        if request.load_history:
-            try:
-                messages = await repo.get_messages(session_id)
-                debug_info["history_loaded"] = len(messages)
-            except Exception as e:
-                debug_info["history_error"] = str(e)
-
-        # Process with PraisonAI agents with custom configuration
-        from praisonaiagents import PraisonAIAgents, Task
-
-        from ..utils.lmstudio_tools import PREDEFINED_TOOLS
-        from ..utils.praison_integration.agents import LLMBackedAgent
-
-        # Get LLM config - either from specified connection or default
-        llm_config = None
-        if request.connection_id:
-            # Get connection from repository
-            llm_repo = LLMConnectionRepository()
-            connection = await llm_repo.get_connection_by_id(request.connection_id)
-            if not connection:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"LLM connection with ID {request.connection_id} not found",
-                )
-            # Convert to LLM config
-            llm_config = llm_repo.connection_to_llm_config(connection).model_dump()
-            debug_info["connection"] = {
-                "id": connection.id,
-                "name": connection.name,
-                "provider": connection.provider,
-                "model": connection.model_name,
-            }
-            logger.info(
-                f"Using LLM connection: {connection.name} ({connection.provider})"
-            )
-        else:
-            # Use default LM Studio config
-            llm_config = {
-                "model": "gpt-3.5-turbo",  # This gets mapped to whatever model is loaded in LM Studio
-                "api_key": None,  # LM Studio doesn't require a real API key
-                "base_url": settings.lmstudio_host,  # Point to LM Studio API
-                "temperature": request.temperature,
-                "max_tokens": 1000,
-                "response_format": {"type": "text"},
-            }
-
-        # Create custom agents with the requested configuration
-        # We'll create them directly rather than using create_master_agent to have more control
-        master_agent = LLMBackedAgent(
-            name="TestMasterAgent",
-            role="Communication Coordinator",
-            goal="Handle user interactions and coordinate with other agents",
-            backstory="""You are the main communication hub for the AI system testing.
-            Your primary responsibility is to interpret user requests, maintain
-            conversation context, and delegate specialized tasks to other agents when needed.
-            Use chat history to maintain context and provide coherent responses.""",
-            llm_config=llm_config,
-            tools=None,
-            self_reflect=request.reflection_enabled,
-            max_reflect=request.reflection_depth,
-        )
-
-        tools_agent = LLMBackedAgent(
-            name="TestToolsAgent",
-            role="Tool Specialist",
-            goal="Execute specialized tools and operations based on requests",
-            backstory="""You are an expert at using various tools to accomplish tasks.
-            When the master agent delegates a task to you, you select and use the
-            appropriate tool to complete it efficiently. Consider chat history context
-            to avoid repeating operations unnecessarily.""",
-            llm_config=llm_config,
-            tools=PREDEFINED_TOOLS if request.tools_enabled else None,
-            self_reflect=request.reflection_enabled,
-            max_reflect=request.reflection_depth,
-        )
-
-        # Define tasks
-        master_task = Task(
-            name="handle_test_request",
-            description="Process the test request and determine if tools are needed",
-            expected_output="Processed response or delegation to tools agent",
-            agent=master_agent,
-        )
-
-        tools_task = Task(
-            name="execute_test_tools",
-            description="Execute specialized tools based on the test request",
-            expected_output="Results from tool execution",
-            agent=tools_agent,
-            context=[master_task],  # The tools task has context from the master task
-        )
-
-        # Create agents system
-        agents = PraisonAIAgents(
-            agents=[master_agent, tools_agent],
-            tasks=[master_task, tools_task],
-            process="hierarchical",
-            verbose=1,
-        )
-
-        # Set user input as state for the agents to access
-        agents.set_state("user_input", request.message)
-
-        # For tracking tool calls
-        tool_calls_recorder = []
-
-        # Define a tool call callback function
-        async def on_tool_call(function_name, arguments, result):
-            tool_calls_recorder.append(
-                {
-                    "function_name": function_name,
-                    "arguments": arguments,
-                    "result": result,
-                }
-            )
-            logger.info(f"Test tool call recorded: {function_name}")
-
-        # Attach callback to agents
-        agents.tool_call_callback = on_tool_call
-
-        # Add chat history if enabled
-        if request.load_history:
-            try:
-                # Get messages from the session
-                messages = await repo.get_messages(session_id)
-
-                # Format messages for the agents
-                chat_history = []
-                for msg in messages:
-                    chat_history.append({"role": msg.role, "content": msg.content})
-
-                if chat_history:
-                    agents.set_state("chat_history", chat_history)
-                    debug_info["chat_history_size"] = len(chat_history)
-            except Exception as e:
-                logger.error(f"Error loading test chat history: {e}")
-                debug_info["history_error"] = str(e)
-
-        # Include function call history if requested
-        if request.include_function_calls:
-            try:
-                function_calls = await repo.get_function_calls(session_id)
-                if function_calls:
-                    agents.set_state("function_call_history", function_calls)
-                    debug_info["function_call_history_size"] = len(function_calls)
-            except Exception as e:
-                logger.error(f"Error loading function call history: {e}")
-                debug_info["function_history_error"] = str(e)
-
-        # Start the multi-agent system asynchronously
-        start_time = time.time()
-        result = await agents.astart()
-        processing_time = time.time() - start_time
-
-        # Add processing time to debug info
-        debug_info["processing_time"] = f"{processing_time:.2f}s"
-
-        # Extract response
-        response_text = result.get("task_results", {}).get(
-            "handle_test_request", "No response generated"
-        )
-        tool_results = result.get("task_results", {}).get("execute_test_tools", None)
-
-        # If tool results but no response, format a response about the tool execution
-        if not response_text and tool_results:
-            response_text = f"Tool execution results: {str(tool_results)}"
-
-        # Save messages if requested
-        if request.save_history:
-            # Messages to save
-            messages_to_save = [
-                {"role": "user", "content": request.message},
-                {"role": "assistant", "content": response_text},
-            ]
-
-            saved_message_ids = []
-            for message in messages_to_save:
-                message_id = await repo.add_message(
-                    session_id=session_id,
-                    role=message["role"],
-                    content=message["content"],
-                )
-                if message_id:
-                    saved_message_ids.append(message_id.id)
-                logger.debug(
-                    f"Saved test {message['role']} message to session {session_id}"
-                )
-
-            debug_info["saved_messages"] = len(saved_message_ids)
-
-            # Log function calls if any were made and assistant message was saved
-            if tool_calls_recorder and saved_message_ids:
-                assistant_message_id = (
-                    saved_message_ids[-1] if len(saved_message_ids) > 1 else None
-                )
-                logged_calls = 0
-
-                for tool_call in tool_calls_recorder:
-                    try:
-                        await repo.log_function_call(
-                            session_id=session_id,
-                            message_id=assistant_message_id,
-                            function_name=tool_call.get(
-                                "function_name", "unknown_function"
-                            ),
-                            arguments=tool_call.get("arguments", {}),
-                            result=tool_call.get("result", None),
-                        )
-                        logged_calls += 1
-                    except Exception as func_err:
-                        logger.error(f"Error logging test function call: {func_err}")
-
-                debug_info["logged_function_calls"] = logged_calls
-
-        # Attach debug info to response
-        final_response = {"text": response_text, "debug": debug_info}
-
-        # If streaming is requested, return a streaming response
-        if request.stream:
-
-            async def response_generator():
-                # Yield the entire response as a single chunk
-                yield f"data: {json.dumps({'text': response_text, 'debug': debug_info})}\n\n"
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(
-                response_generator(), media_type="text/event-stream"
-            )
-        else:
-            return final_response
-
-    except Exception as e:
-        logger.error(f"PraisonAI test failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"PraisonAI test failed: {str(e)}")
-
-
-@router.get("/health")
-async def check_health(client: LMStudioClient = Depends(get_lmstudio_client)):
-    """Check the health status of the LM Studio connection."""
-    try:
-        # Try to get available models as a connectivity test
-        models = client.get_available_models()
-
-        # Get client details for diagnostic info
-        client_host = "unknown"
-        try:
-            client_host = lms.get_default_client().api_host
-        except Exception as host_err:
-            logger.warning(f"Could not get client host: {str(host_err)}")
-
-        return {
-            "status": "healthy",
-            "message": "LM Studio connection is working",
-            "host": client_host,
-            "models": [
-                {
-                    "id": model.identifier,
-                    "name": model.display_name,
-                    "type": model.type,
-                    "instance_id": model.instance_reference,
-                    "context_length": model.context_length,
-                }
-                for model in models
-            ],
-        }
-    except Exception as e:
-        logger.error(f"LM Studio health check failed: {str(e)}")
-        raise HTTPException(
-            status_code=503, detail="LM Studio connection is not healthy"
-        )
-
-
-@router.get("/models", response_model=List[ModelInfo])
-async def list_models(client: LMStudioClient = Depends(get_lmstudio_client)):
-    """List all available models."""
-    try:
-        models = client.get_available_models()
-        return [
-            {
-                "id": model.identifier,
-                "name": model.display_name,
-                "type": model.type,
-                "instance_id": model.instance_reference,
-                "context_length": model.context_length,
-            }
-            for model in models
-        ]
-    except Exception as e:
-        logger.error(f"Failed to list models: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to list models: {str(e)}")
-
-
-@router.get("/models/loaded", response_model=List[ModelInfo])
-async def list_loaded_models(
-    model_type: Optional[str] = Query(
-        None, description="Filter by model type (llm or embedding)"
-    ),
-    client: LMStudioClient = Depends(get_lmstudio_client),
-):
-    """List all models currently loaded in memory."""
-    try:
-        models_info = client.get_loaded_models_info(model_type)
-        return models_info
-    except Exception as e:
-        logger.error(f"Failed to list loaded models: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to list loaded models: {str(e)}"
-        )
-
-
-@router.post("/models/load", response_model=ModelInfo)
-async def load_model(
-    request: LoadModelRequest, client: LMStudioClient = Depends(get_lmstudio_client)
-):
-    """Load a specific model into memory by its key."""
-    try:
-        model_args = {"ttl": request.ttl} if request.ttl else {}
-        model = lms.llm(request.model_key, **model_args)
-
-        return {
-            "id": model.get_info().identifier,
-            "name": model.get_info().display_name,
-            "type": model.get_info().type,
-            "instance_id": model.get_info().instance_reference,
-            "context_length": model.get_info().context_length,
-        }
-    except Exception as e:
-        logger.error(f"Failed to load model {request.model_key}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
-
-
-@router.post("/vision", response_model=TextResponse)
-async def analyze_image(
-    request: ImageAnalysisRequest, client: LMStudioClient = Depends(get_lmstudio_client)
-):
-    """Analyze an image using vision capabilities."""
-    try:
-        response = client.process_with_image(request.prompt, request.image_path)
-        return {"text": response}
-    except Exception as e:
-        logger.error(f"Image analysis failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Image analysis failed: {str(e)}")
-
-
-# Chat session routes
-@router.get("/chat/sessions", response_model=ChatSessionListResponse)
+    prompt: str = Field(
+        ...,
+        description="Text prompt to guide image analysis",
+        min_length=1,
+        max_length=10000,
+    )
+    image_path: str = Field(..., description="File system path to the image file")
+
+
+# ============================================================================
+# CHAT SESSION MANAGEMENT ENDPOINTS
+# ============================================================================
+
+
+@router.get(
+    "/chat/sessions",
+    response_model=ChatSessionListResponse,
+    summary="List all chat sessions",
+    description="Retrieve all chat sessions with their messages and metadata",
+)
 async def list_chat_sessions(
     repo: ChatSessionRepository = Depends(get_chat_repository),
-):
-    """Get all chat sessions."""
+) -> ChatSessionListResponse:
+    """
+    Get all chat sessions with their complete message history.
+
+    This endpoint retrieves all chat sessions from the database, including
+    all messages, timestamps, and metadata. Sessions are ordered by most
+    recently updated first.
+
+    Args:
+        repo: Injected chat session repository
+
+    Returns:
+        ChatSessionListResponse: List of all chat sessions with messages
+
+    Raises:
+        HTTPException: 500 if database operation fails
+
+    Example:
+        ```bash
+        curl -X GET "http://localhost:8009/api/lmstudio/chat/sessions"
+        ```
+    """
     try:
-        db_sessions = await repo.get_all_sessions()
+        logger.info("Retrieving all chat sessions")
 
-        sessions = [
-            ChatSession(
-                id=s.id,
-                name=s.name,
-                messages=[],  # Empty list for listing view
-                created_at=s.created_at.isoformat() if s.created_at else None,
-                updated_at=s.updated_at.isoformat() if s.updated_at else None,
-            )
-            for s in db_sessions
-        ]
+        # Get all sessions from database
+        sessions = await repo.get_all_sessions()
+        logger.debug(f"Found {len(sessions)} sessions in database")
 
-        return {"sessions": sessions}
+        # Build response with messages for each session
+        session_responses = []
+        for session in sessions:
+            try:
+                # Get messages for this session
+                messages = await repo.get_messages(session.id)
+
+                # Convert to response format
+                chat_messages = [
+                    ChatMessage(
+                        role=msg.role,
+                        content=msg.content,
+                        created_at=msg.created_at.isoformat()
+                        if msg.created_at
+                        else None,
+                    )
+                    for msg in messages
+                ]
+
+                # Create session response
+                session_response = ChatSessionResponse(
+                    id=session.id,
+                    name=session.name,
+                    messages=chat_messages,
+                    created_at=session.created_at.isoformat()
+                    if session.created_at
+                    else None,
+                    updated_at=session.updated_at.isoformat()
+                    if session.updated_at
+                    else None,
+                )
+                session_responses.append(session_response)
+
+            except Exception as session_error:
+                logger.warning(
+                    f"Error processing session {session.id}: {session_error}"
+                )
+                # Continue with other sessions, don't fail completely
+                continue
+
+        logger.info(f"Successfully retrieved {len(session_responses)} chat sessions")
+        return ChatSessionListResponse(sessions=session_responses)
+
     except Exception as e:
-        logger.error(f"Failed to list chat sessions: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to list chat sessions: {str(e)}"
-        )
+        error_msg = f"Failed to list chat sessions: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
-@router.post("/chat/sessions", response_model=ChatSessionResponse)
+@router.post(
+    "/chat/sessions",
+    response_model=ChatSessionResponse,
+    status_code=201,
+    summary="Create a new chat session",
+    description="Create a new chat session with optional custom name",
+)
 async def create_chat_session(
-    request: CreateChatSessionRequest = None,
+    request: CreateChatSessionRequest,
     repo: ChatSessionRepository = Depends(get_chat_repository),
-):
-    """Create a new chat session."""
-    try:
-        name = request.name if request else None
-        db_session = await repo.create_session(name)
+) -> ChatSessionResponse:
+    """
+    Create a new chat session for conversations.
 
-        return ChatSession(
+    This endpoint creates a new chat session with an optional custom name.
+    If no name is provided, a default name will be generated based on the
+    current timestamp.
+
+    Args:
+        request: Chat session creation parameters
+        repo: Injected chat session repository
+
+    Returns:
+        ChatSessionResponse: The newly created chat session
+
+    Raises:
+        HTTPException: 500 if session creation fails
+
+    Example:
+        ```bash
+        curl -X POST "http://localhost:8009/api/lmstudio/chat/sessions" \
+             -H "Content-Type: application/json" \
+             -d '{"name": "My Robot Chat"}'
+        ```
+    """
+    try:
+        session_name = request.name or f"Chat {len(await repo.get_all_sessions()) + 1}"
+        logger.info(f"Creating new chat session: '{session_name}'")
+
+        # Create the session in database
+        session = await repo.create_session(session_name)
+
+        # Verify creation was successful
+        db_session = await repo.get_session_by_id(session.id)
+        if not db_session:
+            raise HTTPException(
+                status_code=500,
+                detail="Session creation failed: Unable to retrieve created session",
+            )
+
+        # Prepare response
+        response = ChatSessionResponse(
             id=db_session.id,
             name=db_session.name,
-            messages=[],
+            messages=[],  # New sessions start with no messages
             created_at=db_session.created_at.isoformat()
             if db_session.created_at
             else None,
@@ -729,37 +431,76 @@ async def create_chat_session(
             if db_session.updated_at
             else None,
         )
+
+        logger.info(f"Successfully created chat session {session.id}")
+        return response
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to create chat session: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to create chat session: {str(e)}"
-        )
+        error_msg = f"Failed to create chat session: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
-@router.get("/chat/sessions/{session_id}", response_model=ChatSessionResponse)
+@router.get(
+    "/chat/sessions/{session_id}",
+    response_model=ChatSession,
+    summary="Get a specific chat session",
+    description="Retrieve a chat session by ID with all messages",
+)
 async def get_chat_session(
-    session_id: str = Path(..., description="The ID of the chat session"),
+    session_id: str = Path(..., description="Unique identifier of the chat session"),
     repo: ChatSessionRepository = Depends(get_chat_repository),
-):
-    """Get a chat session by ID."""
+) -> ChatSession:
+    """
+    Retrieve a specific chat session with all its messages.
+
+    This endpoint fetches a chat session by its unique ID, including all
+    messages in chronological order with their timestamps and metadata.
+
+    Args:
+        session_id: Unique identifier of the session to retrieve
+        repo: Injected chat session repository
+
+    Returns:
+        ChatSession: Complete session data with messages
+
+    Raises:
+        HTTPException: 404 if session not found, 500 if retrieval fails
+
+    Example:
+        ```bash
+        curl -X GET "http://localhost:8009/api/lmstudio/chat/sessions/123e4567-e89b-12d3-a456-426614174000"
+        ```
+    """
     try:
+        logger.info(f"Retrieving chat session: {session_id}")
+
+        # Get session from database
         db_session = await repo.get_session_by_id(session_id)
         if not db_session:
+            logger.warning(f"Chat session not found: {session_id}")
             raise HTTPException(
                 status_code=404, detail=f"Chat session with ID {session_id} not found"
             )
 
+        # Get all messages for this session
         messages = await repo.get_messages(session_id)
+        logger.debug(f"Retrieved {len(messages)} messages for session {session_id}")
+
+        # Convert messages to response format
         chat_messages = [
             ChatMessage(
                 role=msg.role,
                 content=msg.content,
-                created_at=msg.created_at.isoformat(),
+                created_at=msg.created_at.isoformat() if msg.created_at else None,
             )
             for msg in messages
         ]
 
-        return ChatSession(
+        # Build complete session response
+        session_response = ChatSession(
             id=db_session.id,
             name=db_session.name,
             messages=chat_messages,
@@ -770,228 +511,668 @@ async def get_chat_session(
             if db_session.updated_at
             else None,
         )
+
+        logger.info(f"Successfully retrieved session {session_id}")
+        return session_response
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get chat session: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get chat session: {str(e)}"
-        )
+        error_msg = f"Failed to get chat session {session_id}: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
-@router.delete("/chat/sessions/{session_id}")
+@router.delete(
+    "/chat/sessions/{session_id}",
+    status_code=200,
+    summary="Delete a chat session",
+    description="Permanently delete a chat session and all its messages",
+)
 async def delete_chat_session(
-    session_id: str = Path(..., description="The ID of the chat session"),
+    session_id: str = Path(
+        ..., description="Unique identifier of the session to delete"
+    ),
     repo: ChatSessionRepository = Depends(get_chat_repository),
-):
-    """Delete a chat session."""
+) -> dict:
+    """
+    Delete a chat session and all associated messages.
+
+    This endpoint permanently removes a chat session from the database,
+    including all messages, function calls, and metadata. This action
+    cannot be undone.
+
+    Args:
+        session_id: Unique identifier of the session to delete
+        repo: Injected chat session repository
+
+    Returns:
+        dict: Confirmation message
+
+    Raises:
+        HTTPException: 404 if session not found, 500 if deletion fails
+
+    Example:
+        ```bash
+        curl -X DELETE "http://localhost:8009/api/lmstudio/chat/sessions/123e4567-e89b-12d3-a456-426614174000"
+        ```
+    """
     try:
+        logger.info(f"Attempting to delete chat session: {session_id}")
+
+        # Attempt to delete the session
         success = await repo.delete_session(session_id)
+
         if not success:
+            logger.warning(f"Chat session not found for deletion: {session_id}")
             raise HTTPException(
                 status_code=404, detail=f"Chat session with ID {session_id} not found"
             )
+
+        logger.info(f"Successfully deleted chat session: {session_id}")
         return {"message": f"Chat session {session_id} deleted successfully"}
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete chat session: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to delete chat session: {str(e)}"
-        )
+        error_msg = f"Failed to delete chat session {session_id}: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
-@router.get("/chat/sessions/active/", response_model=ChatSessionResponse)
-async def get_active_session(client: LMStudioClient = Depends(get_lmstudio_client)):
-    """Get the most recently active chat session."""
-    try:
-        active_session = await client.get_active_session()
+@router.get(
+    "/chat/sessions/active/",
+    response_model=ChatSessionResponse,
+    summary="Get the active chat session",
+    description="Retrieve the most recently updated session or create a new one",
+)
+async def get_active_session(
+    repo: ChatSessionRepository = Depends(get_chat_repository),
+) -> ChatSessionResponse:
+    """
+    Get the most recently active chat session.
 
-        if not active_session:
-            active_session = await client.create_chat_session("New Chat")
+    This endpoint returns the chat session that was most recently updated.
+    If no sessions exist, it automatically creates a new default session.
+    This is useful for maintaining conversation continuity in single-session
+    applications.
 
-        return {
-            "id": active_session.id,
-            "name": active_session.name,
-            "messages": active_session.messages,
-            "created_at": active_session.created_at,
-            "updated_at": active_session.updated_at,
-        }
-    except Exception as e:
-        logger.error(f"Failed to get active session: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get active session: {str(e)}"
-        )
+    Args:
+        repo: Injected chat session repository
 
+    Returns:
+        ChatSessionResponse: The active session with all messages
 
-@router.post("/chat/completions", response_model=Union[TextResponse, None])
-async def process_single_message(
-    request: SingleMessageRequest,
-    client: LMStudioClient = Depends(get_lmstudio_client),
-):
-    """Process a single message and generate a response based on role.
+    Raises:
+        HTTPException: 500 if session retrieval/creation fails
 
-    This unified endpoint handles:
-    - Adding system messages to the active session
-    - Adding assistant messages to the active session
-    - Processing user messages with automatic tool detection
-    - Supporting streaming or non-streaming responses
-    - Using PraisonAI agents if requested
+    Example:
+        ```bash
+        curl -X GET "http://localhost:8009/api/lmstudio/chat/sessions/active/"
+        ```
     """
     try:
-        # Use PraisonAI agents if requested
-        if request.use_praison and request.role == "user":
-            # Get active session or create a new one
-            repo = ChatSessionRepository()
-            active_session = await repo.get_active_session()
-            if not active_session:
-                active_session = await repo.create_session("New PraisonAI Chat")
+        logger.info("Retrieving active chat session")
 
-            session_id = active_session.id
+        # Try to get the most recent session
+        active_session = await repo.get_active_session()
 
-            # Get LLM config from database
-            llm_config = await get_llm_config()
-
-            # Process directly with LM Studio for now until agents are fixed
-            logger.info(
-                f"Processing user message for session {session_id}"
-            )
-
-            # Save user message to session
-            await repo.add_message(
-                session_id=session_id,
-                role="user",
-                content=request.content,
-            )
-
-            # Get a direct response from the model
-            response = client.generate_response(
-                prompt=request.content,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                stream=False
-            )
-
-            # Save assistant message to session
-            await repo.add_message(
-                session_id=session_id,
-                role="assistant",
-                content=response,
-            )
-
-            logger.info(f"Saved user message to session {session_id}")
-            logger.info(f"Saved assistant message to session {session_id}")
-
-            return TextResponse(text=response)
-
-
-            # Save messages to the database
-            messages_to_save = result.get("messages_to_save", [])
-            for message in messages_to_save:
-                message_id = await repo.add_message(
-                    session_id=session_id,
-                    role=message["role"],
-                    content=message["content"],
-                )
-                logger.info(f"Saved {message['role']} message to session {session_id}")
-
-                # Log function calls if any were made
-                if message["role"] == "assistant" and result.get("tool_calls"):
-                    for tool_call in result.get("tool_calls", []):
-                        try:
-                            await repo.log_function_call(
-                                session_id=session_id,
-                                message_id=message_id.id if message_id else None,
-                                function_name=tool_call.get(
-                                    "function_name", "unknown_function"
-                                ),
-                                arguments=tool_call.get("arguments", {}),
-                                result=tool_call.get("result", None),
-                            )
-                            logger.info(
-                                f"Logged function call {tool_call.get('function_name')} for session {session_id}"
-                            )
-                        except Exception as func_err:
-                            logger.error(f"Error logging function call: {func_err}")
-
-            # Extract response from multi-agent processing
-            response_text = result.get("response", "")
-            if not response_text:
-                # This should rarely happen now as we handle this in the agent process
-                response_text = "No response generated from agents."
-
-            # If streaming is requested, return a streaming response
-            if request.stream:
-
-                async def response_generator():
-                    # Yield the entire response as a single chunk
-                    yield f"data: {json.dumps({'text': response_text})}\n\n"
-                    yield "data: [DONE]\n\n"
-
-                return StreamingResponse(
-                    response_generator(), media_type="text/event-stream"
-                )
-            else:
-                return {"text": response_text}
-
-        # Regular LM Studio processing
-        # Get active session
-        active_session = await client.get_active_session()
+        # Create a new session if none exists
         if not active_session:
-            active_session = await client.create_chat_session("New Chat")
+            logger.info("No active session found, creating new default session")
+            active_session = await repo.create_session("New Chat")
 
-        session_id = active_session.id
+        # Get messages for this session
+        messages = await repo.get_messages(active_session.id)
+        logger.debug(f"Active session {active_session.id} has {len(messages)} messages")
 
-        # For user messages, we'll check if tools should be used
-        tools = None
-        if request.role == "user":
-            # Automatically provide tools for user messages
-            tools = PREDEFINED_TOOLS
-
-        # Use streaming mode if requested
-        if request.stream:
-
-            async def response_generator():
-                # Get the async generator directly - no await here
-                generator = client.process_message(
-                    session_id=session_id,
-                    role=request.role,
-                    content=request.content,
-                    available_tools=tools,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    stream=True,
-                )
-
-                if generator is not None:  # For user messages only
-                    async for fragment in generator:
-                        yield f"data: {fragment}\n\n"
-
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(
-                response_generator(), media_type="text/event-stream"
+        # Convert messages to response format
+        chat_messages = [
+            ChatMessage(
+                role=msg.role,
+                content=msg.content,
+                created_at=msg.created_at.isoformat() if msg.created_at else None,
             )
-        else:
-            # Non-streaming mode
-            response = await client.process_message(
-                session_id=session_id,
-                role=request.role,
-                content=request.content,
-                available_tools=tools,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                stream=False,
-            )
+            for msg in messages
+        ]
 
-            # For system or assistant messages, there's no response
-            if request.role != "user":
-                return None
+        # Build response
+        response = ChatSessionResponse(
+            id=active_session.id,
+            name=active_session.name,
+            messages=chat_messages,
+            created_at=active_session.created_at.isoformat()
+            if active_session.created_at
+            else None,
+            updated_at=active_session.updated_at.isoformat()
+            if active_session.updated_at
+            else None,
+        )
 
-            return {"text": response}
+        logger.info(f"Successfully retrieved active session: {active_session.id}")
+        return response
 
     except Exception as e:
-        logger.error(f"Failed to process message: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to process message: {str(e)}"
+        error_msg = f"Failed to get active session: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+# ============================================================================
+# MESSAGE PROCESSING ENDPOINTS
+# ============================================================================
+
+
+@router.post(
+    "/chat/completions",
+    response_model=Union[TextResponse, None],
+    summary="Process a message and generate AI response",
+    description="Send a message to the AI and get a response with optional function calling",
+)
+async def process_single_message(
+    request: SingleMessageRequest,
+) -> Union[TextResponse, StreamingResponse]:
+    """
+    Process a single message and generate an AI response with function calling support.
+
+    This is the main endpoint for interacting with the AI. It supports:
+    - User messages with AI response generation
+    - System messages for context setting
+    - Assistant messages for conversation continuation
+    - Function/tool calling for robot control
+    - Streaming and non-streaming responses
+    - Persistent conversation history
+
+    AI Function Calling Workflow:
+    1. Retrieve conversation history from database
+    2. Add user message to conversation
+    3. Send conversation to AI with available tools
+    4. Execute any function calls made by the AI
+    5. Send function results back to AI for final response
+    6. Save complete interaction to database
+    7. Return response to client
+
+    Args:
+        request: Message processing parameters
+
+    Returns:
+        TextResponse or StreamingResponse: AI-generated response
+
+    Raises:
+        HTTPException: 500 if processing fails
+
+    Available Robot Functions:
+        - robot_move_home: Move robot to home position
+        - robot_control_gripper: Control gripper operations
+        - robot_gripper_led_control: Control gripper LED indicators
+        - robot_move_to_specified_position: Move to specific coordinates
+        - robot_reset_all: Reset all robot systems
+        - robot_run_pick_and_place_cycle: Execute pick and place sequence
+
+    Example:
+        ```bash
+        curl -X POST "http://localhost:8009/api/lmstudio/chat/completions" \
+             -H "Content-Type: application/json" \
+             -d '{
+               "role": "user",
+               "content": "Move the robot to home position",
+               "temperature": 0.7,
+               "stream": false
+             }'
+        ```
+    """
+    try:
+        # Route processing based on message role
+        if request.role == "user":
+            return await _process_user_message(request)
+        elif request.role in ["system", "assistant"]:
+            return await _process_non_user_message(request)
+        else:
+            logger.warning(f"Unsupported message role: {request.role}")
+            return TextResponse(text=f"Unsupported role: {request.role}")
+
+    except Exception as e:
+        error_msg = f"Failed to process message: {str(e)}"
+        logger.error(
+            f"{error_msg} | Role: {request.role} | Content length: {len(request.content)}"
         )
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+# ============================================================================
+# MESSAGE PROCESSING HELPER FUNCTIONS
+# ============================================================================
+
+
+async def _process_user_message(
+    request: SingleMessageRequest,
+) -> Union[TextResponse, StreamingResponse]:
+    """
+    Process a user message with AI response generation and function calling.
+
+    This function handles the complete workflow for user messages:
+    1. Get/create active session
+    2. Save user message to database
+    3. Generate AI response with tool support
+    4. Execute any function calls
+    5. Get final response and save to database
+
+    Args:
+        request: User message request with generation parameters
+
+    Returns:
+        TextResponse or StreamingResponse: Generated AI response
+    """
+    # Get the active session from the database
+    repo = get_chat_repository()
+    active_session = await repo.get_active_session()
+    if not active_session:
+        active_session = await repo.create_session("New Chat")
+
+    session_id = active_session.id
+
+    # Save user message first
+    await repo.add_message(
+        session_id=session_id,
+        role="user",
+        content=request.content,
+    )
+
+    # Get LLM configuration and client
+    llm_config = await get_llm_config()
+    model = llm_config.get("model")
+    client = get_openai_client(llm_config.get("api_key"), llm_config.get("base_url"))
+
+    # Prepare conversation history
+    formatted_messages = await _prepare_conversation_history(repo, session_id)
+
+    # Log processing information
+    logger.info(f"Processing user message for session {session_id}")
+
+    # Determine if robot functions should be enabled based on user message
+    user_message_lower = request.content.lower()
+    enable_robot_functions = _should_enable_robot_functions(user_message_lower)
+    
+    # Log tool selection decision
+    logger.info(f"Tool selection analysis: message='{request.content}', enable_functions={enable_robot_functions}")
+    
+    # Get available tools and functions only if needed
+    tools = client.get_registered_tools() if enable_robot_functions else []
+    available_functions = _get_available_robot_functions() if enable_robot_functions else {}
+    
+    # Set tool choice based on whether functions are enabled
+    tool_choice = "auto" if enable_robot_functions else "none"
+    
+    logger.info(f"Using tool_choice='{tool_choice}', tools_count={len(tools)}")
+
+    try:
+        # Configure generation parameters
+        temperature = request.temperature if request.temperature is not None else 0.7
+
+        # Generate AI response with conditional function calls
+        completion_kwargs = {
+            "messages": formatted_messages,
+            "model": model,
+            "temperature": temperature,
+            "stream": False,
+            "parallel_tool_calls": False,
+        }
+        
+        # Only add tools and tool_choice if tools are available
+        if tools:
+            completion_kwargs["tools"] = tools
+            completion_kwargs["tool_choice"] = tool_choice
+        
+        response = client.chat_completion(**completion_kwargs)
+
+        # Process response and handle any tool calls
+        final_response_text = await _handle_ai_response_with_tools(
+            response,
+            formatted_messages,
+            available_functions,
+            client,
+            model,
+            temperature,
+            tools,
+        )
+
+        # Save assistant response to database
+        await repo.add_message(
+            session_id=session_id,
+            role="assistant",
+            content=final_response_text,
+        )
+
+        logger.info(f"Successfully processed user message for session {session_id}")
+
+        # Handle streaming vs non-streaming response
+        if request.stream:
+            return _create_streaming_response(final_response_text)
+        else:
+            return TextResponse(text=final_response_text)
+
+    except Exception as e:
+        error_msg = f"Failed to process user message: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+async def _process_non_user_message(request: SingleMessageRequest) -> TextResponse:
+    """
+    Process system or assistant messages.
+
+    These messages are typically used for context setting or conversation
+    continuation and don't require AI response generation.
+
+    Args:
+        request: System or assistant message request
+
+    Returns:
+        TextResponse: Confirmation message
+    """
+    # Get active session
+    repo = get_chat_repository()
+    active_session = await repo.get_active_session()
+    if not active_session:
+        active_session = await repo.create_session("New Chat")
+
+    # Save the message to database
+    await repo.add_message(
+        session_id=active_session.id,
+        role=request.role,
+        content=request.content,
+    )
+
+    logger.info(f"Saved {request.role} message to session {active_session.id}")
+    return TextResponse(text=f"{request.role.title()} message saved successfully")
+
+
+async def _prepare_conversation_history(
+    repo: ChatSessionRepository, session_id: str
+) -> List[dict]:
+    """
+    Prepare conversation history for AI model consumption.
+
+    Retrieves messages from database and formats them for OpenAI API,
+    ensuring there's a system message for context.
+
+    Args:
+        repo: Chat session repository
+        session_id: Session identifier
+
+    Returns:
+        List[dict]: Formatted messages for AI model
+    """
+    # Get message history from the repository
+    chat_history = await repo.get_messages(session_id)
+
+    # Format messages for OpenAI API
+    formatted_messages = []
+    for msg in chat_history:
+        formatted_messages.append({"role": msg.role, "content": msg.content})
+
+    # Ensure there's a system message for context
+    has_system_message = any(m["role"] == "system" for m in formatted_messages)
+    if not has_system_message:
+        formatted_messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": (
+                    "You are RoboPilot, a friendly and intelligent robot companion. "
+                    
+                    "Your main job is having natural conversations. Chat about anything - answer questions, share thoughts, be curious about the user's life. "
+                    "Keep responses conversational and natural for speech. Use short, clear sentences. Avoid being overly wordy or repetitive. "
+                    
+                    "IMPORTANT: Only use robot functions when users ask for specific physical actions like 'move forward', 'pick up object', or 'go home'. "
+                    "For everything else - greetings, questions, casual chat - just talk normally without calling any functions. "
+                    
+                    "Be warm, curious, and engaging. Ask follow-up questions when appropriate. "
+                    "Keep things conversational and don't overthink responses."
+                ),
+            },
+        )
+
+    return formatted_messages
+
+
+def _should_enable_robot_functions(user_message: str) -> bool:
+    """
+    Determine if robot functions should be enabled based on user message content.
+    
+    Args:
+        user_message: The user's message content in lowercase
+        
+    Returns:
+        bool: True if robot functions should be available, False otherwise
+    """
+    # First, check if it's clearly a question or conversational request
+    question_patterns = [
+        "can you", "could you", "would you", "will you", "please",
+        "what can", "how can", "what do", "how do", "what is", "how does",
+        "tell me", "explain", "describe", "help me understand"
+    ]
+    
+    for pattern in question_patterns:
+        if user_message.startswith(pattern):
+            return False
+    
+    # Check for conversational greetings and general questions
+    conversation_patterns = [
+        "hello", "hi", "hey", "how are you", "what's up", "good morning",
+        "good afternoon", "good evening", "thanks", "thank you"
+    ]
+    
+    for pattern in conversation_patterns:
+        if pattern in user_message:
+            return False
+    
+    # Direct robot action commands (high priority)
+    direct_actions = [
+        "move forward", "move backward", "turn left", "turn right", 
+        "go forward", "go backward", "go left", "go right", "go home",
+        "pick up", "pick it up", "place", "put down", "drop",
+        "open gripper", "close gripper", "gripper open", "gripper close",
+        "move to", "go to", "navigate to", "execute", "run cycle",
+        "reset robot", "robot reset", "start sequence", "perform"
+    ]
+    
+    # Check for direct action commands
+    for action in direct_actions:
+        if action in user_message:
+            return True
+    
+    # Check for imperative commands that start with action verbs
+    imperative_starters = ("move", "go", "turn", "pick", "place", "open", "close", "reset", "stop", "start")
+    if user_message.startswith(imperative_starters):
+        return True
+    
+    # Robot control keywords (but only if in clear action context)
+    action_keywords = ["move", "turn", "rotate", "pick", "place", "grab", "drop", "home", "position"]
+    robot_context = ["robot", "arm", "gripper"]
+    
+    has_action = any(keyword in user_message for keyword in action_keywords)
+    has_robot_context = any(context in user_message for context in robot_context)
+    
+    # Enable tools only if both action and robot context are present
+    if has_action and has_robot_context:
+        return True
+    
+    # Default to conversation mode (no tools)
+    return False
+
+
+def _get_available_robot_functions() -> dict:
+    """
+    Get mapping of available robot control functions.
+
+    Returns:
+        dict: Function name to callable mapping
+    """
+    return {
+        "robot_move_home": robot_move_home,
+        "robot_run_pick_and_place_cycle": robot_run_pick_and_place_cycle,
+        "robot_control_gripper": robot_control_gripper,
+        "robot_gripper_led_control": robot_gripper_led_control,
+        "robot_move_to_specified_position": robot_move_to_specified_position,
+        "robot_reset_all": robot_reset_all,
+    }
+
+
+async def _handle_ai_response_with_tools(
+    response,
+    formatted_messages: List[dict],
+    available_functions: dict,
+    client,
+    model: str,
+    temperature: float,
+    tools: List[dict] = None,
+) -> str:
+    """
+    Handle AI response and execute any tool calls.
+
+    If the AI response includes tool calls, execute them and get a final
+    response incorporating the tool results.
+
+    Args:
+        response: The initial AI response from OpenAI
+        formatted_messages: The conversation history
+        available_functions: Dict of available function name -> callable mappings
+        client: The OpenAI client instance
+        model: Model name to use for follow-up requests
+        temperature: Temperature setting for requests
+        tools: List of available tools (optional)
+
+    Returns:
+        str: Final response text after processing any tool calls
+    """
+    message = response.choices[0].message
+
+    # Check if the model made any tool calls
+    if message.tool_calls and available_functions:
+        # Execute the tool calls
+        results = handle_function_calls(message, available_functions)
+
+        # Add the assistant's message with tool calls to conversation
+        formatted_messages.append(
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": message.tool_calls,
+            }
+        )
+
+        # Add tool results to conversation
+        for tool_call in message.tool_calls:
+            tool_call_id = tool_call.id
+            function_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
+            result = results.get(tool_call_id, {"error": "Function execution failed"})
+
+            # Ensure result is serializable
+            if not isinstance(result, (dict, list, str, int, float, bool, type(None))):
+                result = str(result)
+
+            formatted_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps(result),
+                }
+            )
+
+            logger.info(f"Executed function: {function_name} with args: {arguments}")
+
+        # Get final response after tool execution
+        # Generate final response after tool execution
+        final_kwargs = {
+            "messages": formatted_messages,
+            "model": model,
+            "temperature": temperature,
+        }
+        
+        # Only add tools and tool_choice if tools are available
+        if tools:
+            final_kwargs["tools"] = tools
+            final_kwargs["tool_choice"] = "auto"
+        
+        final_response = client.chat_completion(**final_kwargs)
+
+        return final_response.choices[0].message.content
+    else:
+        # No tool calls, return the original response
+        return message.content
+
+
+def _create_streaming_response(text: str) -> StreamingResponse:
+    """
+    Create a streaming response for the given text.
+
+    Args:
+        text: Text to stream
+
+    Returns:
+        StreamingResponse: Streaming HTTP response
+    """
+
+    async def generate():
+        # Simple streaming implementation - split by words
+        words = text.split()
+        for i, word in enumerate(words):
+            if i > 0:
+                yield f" {word}"
+            else:
+                yield word
+            await asyncio.sleep(0.05)  # Small delay for streaming effect
+
+    return StreamingResponse(
+        generate(), media_type="text/plain", headers={"Cache-Control": "no-cache"}
+    )
+
+
+# ============================================================================
+# IMAGE ANALYSIS ENDPOINTS (PLACEHOLDER)
+# ============================================================================
+
+
+@router.post(
+    "/analyze-image",
+    response_model=TextResponse,
+    summary="Analyze an image with AI",
+    description="Send an image to the AI for analysis and description",
+)
+async def analyze_image(request: ImageAnalysisRequest) -> TextResponse:
+    """
+    Analyze an image using multimodal AI capabilities.
+
+    This endpoint accepts an image file path and a text prompt, then uses
+    the configured AI model to analyze the image and provide a response.
+    Note: This feature requires a multimodal-capable AI model.
+
+    Args:
+        request: Image analysis request with prompt and image path
+
+    Returns:
+        TextResponse: AI analysis of the image
+
+    Raises:
+        HTTPException: 501 if not implemented, 500 for processing errors
+
+    Example:
+        ```bash
+        curl -X POST "http://localhost:8009/api/lmstudio/analyze-image" \
+             -H "Content-Type: application/json" \
+             -d '{
+               "prompt": "What do you see in this image?",
+               "image_path": "/path/to/image.jpg"
+             }'
+        ```
+    """
+    # Placeholder implementation - this would need to be implemented based on
+    # the specific multimodal AI model being used
+    logger.warning("Image analysis endpoint called but not fully implemented")
+
+    return TextResponse(
+        text="Image analysis functionality is not yet implemented. "
+        "This endpoint is a placeholder for future multimodal AI capabilities."
+    )

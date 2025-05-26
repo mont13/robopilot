@@ -13,7 +13,7 @@ from app.controllers.llm_connection_controller import router as llm_connection_r
 from app.controllers.lmstudio_controller import router as lmstudio_router
 from app.controllers.stt_controller import router as stt_router
 from app.controllers.tts_controller import router as tts_router
-from app.controllers.user_controller import user_router
+from app.controllers.user_controller import router as user_router
 from app.utils import db_session
 
 settings = get_settings()

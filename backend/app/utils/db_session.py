@@ -20,8 +20,14 @@ sessionmaker = async_sessionmaker(bind=engine, expire_on_commit=False)
 @asynccontextmanager
 async def get_db_session() -> AsyncGenerator:
     session = sessionmaker()
-    async with session.begin():
-        yield session
+    try:
+        async with session.begin():
+            yield session
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 async def shutdown() -> None:
