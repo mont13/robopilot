@@ -1,0 +1,60 @@
+services:
+  backend:
+    image: ${IMAGE_NAME:-robopilot-backend:latest}
+    ports:
+      - "8009:8009"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ${TARGET:-development}
+    environment:
+      POSTGRES_DB_HOST: postgresql
+      APP_RELOAD: "true"
+      POSTGRES_DB: fastapi_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./app:/home/appuser/app
+      - ./voices:/home/appuser/voices
+      - ./scripts:/home/appuser/scripts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - db
+    links:
+      - db:postgresql
+    networks:
+      - backend-network
+    command: >
+      bash -c "
+        if [ -z \"$(ls /home/appuser/voices/*.onnx 2>/dev/null)\" ]; then
+          echo 'No voice models found, downloading default voices...'
+          /home/appuser/scripts/download_voices.sh
+        fi
+        python3 -m app.main
+      "
+
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: fastapi_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  backend-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

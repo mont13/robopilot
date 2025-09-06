@@ -1,0 +1,145 @@
+[project]
+name = "robopilot-backend"
+version = "0.1.0"
+description = "Fast Api voice chat bot API"
+authors = [{ name = "xsnyrch", email = "xsnyrch@example.com" }]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # Core FastAPI
+    "fastapi>=0.115.12,<0.116.0",
+    "uvicorn[standard]>=0.20.0,<0.30.0",
+    "python-multipart>=0.0.20,<0.1.0",
+    "pydantic-settings>=2.9.1,<3.0.0",
+    # Database
+    "alembic>=1.10.4,<2.0.0",
+    "sqlalchemy>=2.0.12,<3.0.0",
+    "asyncpg>=0.27.0,<0.30.0",
+    "psycopg2-binary>=2.9.6,<3.0.0",
+    # Authentication
+    "bcrypt>=4.0.1,<5.0.0",
+    "passlib>=1.7.4,<2.0.0",
+    "python-jose[cryptography]>=3.3.0,<4.0.0",
+    # Whisper and core dependencies
+    "openai-whisper>=20231117",
+    "torch>=2.0.0,<3.0.0",
+    "torchvision>=0.15.0,<1.0.0",
+    "torchaudio>=2.0.0,<3.0.0",
+    "tiktoken>=0.5.0,<1.0.0",
+    "numpy>=1.21.0,<2.0.0",
+    "setuptools-rust>=1.5.0,<2.0.0",
+    "ffmpeg-python>=0.2.0,<1.0.0",
+    # Piper TTS
+    "piper-tts>=1.2.0",
+    # BeeAI Framework
+    "beeai-framework[mcp]>=0.1.43,<1.0.0",
+    "requests>=2.28.0,<3.0.0",
+    "httpx>=0.24.0,<1.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    # Utilities
+    "python-ulid>=1.1.0,<2.0.0",
+    "backoff>=2.2.1,<3.0.0",
+    "nest-asyncio>=1.6.0,<2.0.0",
+    # Additional packages that might be needed
+    "pydantic>=2.0.0,<3.0.0",
+    "greenlet>=3.2.4",
+    "mcp>=1.12.4",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.1.0,<1.0.0",
+    "mypy>=1.8.0,<2.0.0",
+    "pre-commit>=3.0.0,<4.0.0",
+    "ipykernel>=6.29.5,<7.0.0",
+]
+
+
+# Ruff - Fast Python linter (replaces flake8, isort, etc.)
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+# Enable essential rules
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # Pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+    "SIM",   # flake8-simplify
+    "S",     # bandit security
+    "N",     # pep8-naming
+    "ASYNC", # flake8-async
+]
+
+# Ignore common issues
+ignore = [
+    "E501", # Line too long (handled by formatter)
+    "S101", # Use of assert (ok in tests)
+    "S104", # Possible binding to all interfaces
+    "S108", # Probable insecure usage of temporary file
+    "B008", # Do not perform function calls in argument defaults (FastAPI Depends pattern)
+    "B904", # Within except clause, raise exceptions with raise ... from err (FastAPI HTTPException pattern)
+]
+
+# Auto-fix safe rules
+fixable = ["ALL"]
+unfixable = ["F401", "F841"] # Don't auto-remove unused imports/variables
+
+# Per-file rules
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S602", "S603", "S607"]
+"migrations/*" = ["E501"]
+"app/config/*" = ["S105"]                    # Allow hardcoded passwords in config (for defaults)
+"app/controllers/*" = ["UP007"]              # Allow Union syntax in FastAPI response models
+
+# Import sorting
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# Type checking with mypy
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false # Start lenient, tighten over time
+show_error_codes = true
+pretty = true
+
+# Ignore missing imports for third-party packages
+[[tool.mypy.overrides]]
+module = [
+    "piper.*",
+    "beeai_framework.*",
+    "google.*",
+    "openai.*",
+    "uvicorn.*",
+    "psycopg2.*",
+    "asyncpg.*",
+    "passlib.*",
+    "jose.*",
+    "bcrypt.*",
+    "whisper.*",
+    "torch.*",
+    "torchaudio.*",
+    "torchvision.*",
+    "tiktoken.*",
+    "piper.*",
+    "beeai_framework.*",
+]
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+[tool.pydantic-pycharm-plugin]
+parsable-type-highlight = "disable"
+acceptable-type-highlight = "warning"

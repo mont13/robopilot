@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "RoboPilot Mobile",
+    "slug": "robopilot-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "robopilot",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.robopilot.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.robopilot.mobile"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow RoboPilot to access your microphone for voice input."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow RoboPilot to access your microphone for voice recording."
+        }
+      ],
+      [
+        "react-native-wakeword",
+        {
+          "microphonePermission": "Allow RoboPilot to access your microphone for wake word detection."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      }
+    }
+  }
+}
